@@ -1,0 +1,24 @@
+{
+    "Application": {
+        "Name": "Universal Remote Toolkit",
+        "Version": "1.0.0"
+    },
+
+    "Company": {
+        "Name": "Tahto"
+    },
+
+    "Paths": {
+        "PsExec": ".\\Bin\\PsExec.exe",
+        "Logs": ".\\Logs"
+    },
+
+    "Network": {
+        "PingTimeout": 1000
+    },
+
+    "Logs": {
+        "RetentionDays": 30,
+        "EnableConsole": true
+    }
+}
