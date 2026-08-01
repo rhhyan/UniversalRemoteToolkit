@@ -28,7 +28,7 @@ UniversalRemoteToolkit/
 ## Roadmap
 
 - [x] Sprint 1 - Project Structure
-- [ ] Sprint 2 - Inventory
+- [x] Sprint 2 - Inventory
 - [ ] Sprint 3 - Universal Uninstaller
 - [ ] Sprint 4 - Universal Installer
 
