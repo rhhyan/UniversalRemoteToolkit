@@ -1,41 +1,28 @@
-# Universal Remote Toolkit (URT)
+## Current Status
 
-Universal Remote Toolkit (URT) is a modular PowerShell 7 toolkit designed for remote Windows administration using PsExec.
+###  Sprint 1 - Project Foundation (Completed)
 
-## Features
-
-- Remote connection via PsExec
-- Software inventory
-- Universal software uninstaller
-- Universal software installer
-- Logging system
+- Project reorganization
 - Modular architecture
-- JSON configuration
+- Logging system
+- Configuration loader
+- Repository structure
+- Documentation
 
-## Project Structure
+###  Sprint 2 - Connection Layer (In Progress)
 
-```text
-UniversalRemoteToolkit/
-├── Assets/
-├── Bin/
-├── Config/
-├── Logs/
-├── Modules/
-├── README.md
-└── UniversalRemoteToolkit.ps1
-```
+Current modules:
 
-## Roadmap
+- Connection.psm1
+- Execution.psm1
 
-- [x] Sprint 1 - Project Structure
-- [x] Sprint 2 - Inventory
-- [ ] Sprint 3 - Universal Uninstaller
-- [ ] Sprint 4 - Universal Installer
+Implemented features:
 
-## Technologies
+- PsExec discovery
+- Host reachability test
+- Execution orchestration design
+- Native process abstraction
 
-- PowerShell 7
-- PsExec
-- JSON
-- Git
-- GitHub
+Status:
+
+🟡 Under Development
