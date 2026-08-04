@@ -1,16 +1,41 @@
 # Roadmap
 
-## ✅ Sprint 1 - Logger Module
+## ✅ Sprint 1
 
-Status: Concluída ✔️
+- [x] Project structure
+- [x] Logger
+- [x] Config
+- [x] Documentation
+- [x] GitHub Repository
 
-Objetivos:
-- [x] Estrutura modular do projeto
-- [x] Start-Log
-- [x] Write-Log
-- [x] Stop-Log
-- [x] Format-LogMessage
-- [x] Sessão de log
-- [x] Escrita em arquivo
-- [x] Saída no console
-- [x] Compatível com PowerShell 7
+---
+
+## 🚧 Sprint 2
+
+- [x] PsExec detection
+- [x] Network validation
+- [ ] Argument Builder
+- [ ] Native Process Runner
+- [ ] Remote Execution
+- [ ] ExitCode Parser
+- [ ] Timeout
+
+---
+
+## 🔜 Sprint 3
+
+- Interactive Console
+
+- Host Selection
+
+- Batch Execution
+
+- Credential Manager
+
+- Progress Bar
+
+- Remote File Copy
+
+- Report Generator
+
+- JSON Output
