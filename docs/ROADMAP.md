@@ -1,41 +1,46 @@
 # Roadmap
 
-## ✅ Sprint 1
+## Sprint 1 — Foundation
 
-- [x] Project structure
-- [x] Logger
-- [x] Config
-- [x] Documentation
-- [x] GitHub Repository
+- [x] Define project structure
+- [x] Create configuration module
+- [x] Create logger module
+- [x] Create utility module
+- [x] Establish initial project documentation
 
----
+## Sprint 2 — Core Remote Execution
 
-## 🚧 Sprint 2
+- [x] Connection module
+- [x] PsExec path detection
+- [x] PsExec installation validation
+- [x] Remote computer reachability check
+- [x] Execution module
+- [x] PsExec argument builder
+- [x] Native PsExec process execution
+- [x] Process timeout handling
+- [x] Structured execution results
+- [x] Comment-based PowerShell documentation
 
-- [x] PsExec detection
-- [x] Network validation
-- [ ] Argument Builder
-- [ ] Native Process Runner
-- [ ] Remote Execution
-- [ ] ExitCode Parser
-- [ ] Timeout
+## Sprint 3 — Console Interface
 
----
+- [ ] Build ConsoleUI foundation
+- [ ] Create main menu
+- [ ] Add interactive computer selection
+- [ ] Add command execution interface
+- [ ] Add execution status display
+- [ ] Add formatted operation results
+- [ ] Integrate ConsoleUI with Logger
+- [ ] Integrate ConsoleUI with Connection
+- [ ] Integrate ConsoleUI with Execution
 
-## 🔜 Sprint 3
+## Future
 
-- Interactive Console
-
-- Host Selection
-
-- Batch Execution
-
-- Credential Manager
-
-- Progress Bar
-
-- Remote File Copy
-
-- Report Generator
-
-- JSON Output
+- [ ] Software inventory
+- [ ] Remote software uninstallation
+- [ ] Remote software installation
+- [ ] Driver management
+- [ ] Batch operations
+- [ ] Improved error handling
+- [ ] Automated tests
+- [ ] Configuration profiles
+- [ ] Advanced logging and reporting

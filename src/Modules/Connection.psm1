@@ -1,112 +1,140 @@
-function Connect-RemoteComputer {
+<#
+.SYNOPSIS
+    Locates the PsExec executable used by the Universal Remote Toolkit.
 
-    param(
-        [string]$ComputerName
-    )
+.DESCRIPTION
+    Resolves the path to PsExec.exe located in the toolkit's Bin directory.
+    The function does not execute PsExec; it only locates the executable.
 
-    Write-Log -Message "Tentando conectar em $ComputerName..." -Level Info
+.OUTPUTS
+    System.String
+    Returns the full path to PsExec.exe when the executable is found.
 
-    # PsExec
+    System.Null
+    Returns $null when PsExec.exe cannot be found.
 
-    Write-Log -Message "Conexão realizada com sucesso." -Level Success
-}
+.EXAMPLE
+    Get-PsExecPath
 
-
+    Returns the full path to the PsExec executable.
+#>
 function Get-PsExecPath {
     [CmdletBinding()]
     param()
 
     process {
         try {
-            $ToolkitRoot = Resolve-Path (
-                Join-Path $PSScriptRoot "./Bin/PsExec.exe"
-            )
-            if (Test-Path $psExecPath) {
-                Write-Log -Level Success -Message "PsExec localizado: $psExecPath"
-                return $true
+            $ToolkitRoot = Split-Path -Parent $PSScriptRoot
+            $ToolkitRoot = Split-Path -Parent $ToolkitRoot
+
+            $PsExecPath = Join-Path $ToolkitRoot "Bin/PsExec.exe"
+
+            if (Test-Path -Path $PsExecPath -PathType Leaf) {
+                return $PsExecPath
             }
 
-            Write-Log -Level Error -Message "PsExec não localizado."
-            return $false
+            return $null
         }
         catch {
-            Write-Log `
-                -Level Error `
-                -Message "Erro ao verificar PsExec: $($_.Exception.Message)"
+            throw "Error locating PsExec: $($_.Exception.Message)"
         }
-    }
-}
-
-function Test-ComputerReachable {
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$ComputerName
-    )
-
-    process {
-
-        try {
-            # Escreve no Log
-            Write-Log `
-                -Level Info `
-                -Message "Verificando computador $ComputerName..."
-            # Teste Ping
-            if (Test-Connection -ComputerName $ComputerName -Count 1 -Quiet -ErrorAction Stop) {
-
-                Write-Log `
-                    -Level Success `
-                    -Message "Computador $ComputerName está online."
-
-                return $true
-            }
-
-            Write-Log `
-                -Level Warning `
-                -Message "Computador $ComputerName não respondeu."
-
-            return $false
-
-    }
-        catch {
-
-            Write-Log `
-                -Level Error `
-                -Message "Erro durante Test-Connection: $($_.Exception.Message)"
-
-            return $false
-        }
-
     }
 }
 
 
 <#
-function ... {
+.SYNOPSIS
+    Checks whether PsExec is available to the toolkit.
 
+.DESCRIPTION
+    Uses Get-PsExecPath to determine whether the PsExec executable
+    exists in the expected Bin directory.
+
+    This function does not execute PsExec or establish a remote
+    connection.
+
+.OUTPUTS
+    System.Boolean
+    Returns $true when PsExec is available.
+    Returns $false when PsExec cannot be found.
+
+.EXAMPLE
+    Test-PsExecInstalled
+
+    Returns True when PsExec is available to the toolkit.
+#>
+function Test-PsExecInstalled {
     [CmdletBinding()]
     param()
 
     process {
+        $PsExecPath = Get-PsExecPath
 
-        try {
-
-            ...
-
-            Write-Log ...
-
-            return $true
-
-        }
-        catch {
-
-            Write-Log ...
-
-            return $false
-
-        }
-
+        return ($null -ne $PsExecPath)
     }
 }
+
+
+<#
+.SYNOPSIS
+    Tests whether a remote computer is reachable.
+
+.DESCRIPTION
+    Sends a single ICMP request to the specified computer using
+    Test-Connection.
+
+    This function only verifies network reachability. A successful
+    response does not guarantee that PsExec, SMB, RPC, or other
+    remote execution services are available.
+
+.PARAMETER ComputerName
+    Specifies the hostname or IP address of the computer to test.
+
+.OUTPUTS
+    System.Boolean
+    Returns $true when the computer responds to the connectivity test.
+    Returns $false when the computer does not respond or an error occurs.
+
+.EXAMPLE
+    Test-ComputerReachable -ComputerName "HOSTNAME"
+
+    Tests whether PC-001 responds to an ICMP request.
+
+.EXAMPLE
+    Test-ComputerReachable -ComputerName "172.1.1.1"
+
+    Tests whether the specified IP address responds to an ICMP request.
 #>
+function Test-ComputerReachable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComputerName
+    )
+
+    process {
+        try {
+            if (
+                Test-Connection `
+                    -ComputerName $ComputerName `
+                    -Count 1 `
+                    -Quiet `
+                    -ErrorAction Stop
+            ) {
+                return $true
+            }
+
+            return $false
+        }
+        catch {
+            return $false
+        }
+    }
+}
+
+
+Export-ModuleMember -Function `
+    Get-PsExecPath, `
+    Test-PsExecInstalled, `
+    Test-ComputerReachable

@@ -3,26 +3,11 @@
 ```text
 UniversalRemoteToolkit
 │
-├── Assets/
-│   ├── Banner.png
-│   ├── Logo.png
-│   └── Screenshots/
-│
-├── Bin/
-│   └── PsExec.exe
-│
-├── docs/
-│   ├── Architecture.md
-│   ├── CHANGELOG.md
-│   └── ROADMAP.md
-│
-├── Logs/
-│
-├── src/
-│   ├── Config/
+├── src
+│   ├── Config
 │   │   └── Settings.json
 │   │
-│   ├── Modules/
+│   ├── Modules
 │   │   ├── Config.psm1
 │   │   ├── Connection.psm1
 │   │   ├── ConsoleUI.psm1
@@ -32,7 +17,9 @@ UniversalRemoteToolkit
 │   │
 │   └── UniversalRemoteToolkit.ps1
 │
-├── Tests/
-│
-└── README.md
+├── Assets
+├── Bin
+├── docs
+├── Logs
+└── Tests
 ```
