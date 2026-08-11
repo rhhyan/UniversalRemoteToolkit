@@ -14,7 +14,8 @@ function Get-ToolkitConfig {
 
     if (Test-Path $ConfigFile) {
         Get-Content $ConfigFile -Raw | ConvertFrom-Json
-    } else {
+    }
+    else {
         throw "Arquivo de configuração não encontrado: $ConfigFile"
     }
 }

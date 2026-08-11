@@ -1,7 +1,7 @@
 <#
     Module: Logger.psm1
 
-    inicia a sessão de logs do URT
+    start logs URT
 #>
 
 function Start-Log {

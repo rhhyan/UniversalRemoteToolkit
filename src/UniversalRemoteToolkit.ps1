@@ -234,43 +234,24 @@ function Invoke-ExecutionMenu {
 
                     Write-Log `
                         -Level Info `
-                        -Message "Starting execution on $Computer : $Executable $Arguments"
+                        -Message "Starting remote execution on $Computer"
 
-                    # ------------------------------------------------
-                    # TEMPORARY MOCK
-                    #
-                    # Replace this with:
-                    #
-                    # Invoke-PsExecCommand
-                    # ------------------------------------------------
+                    $Result = Invoke-PsExecCommand `
+                        -ComputerName $Computer `
+                        -Executable $Executable `
+                        -Arguments $Arguments `
+                        -TimeoutSeconds 60
 
-                    $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    if ($Result.Success) {
 
-                    Start-Sleep -Milliseconds 150
+                        Write-Log `
+                            -Level Info `
+                            -Message "Execution completed successfully on $Computer"
 
-                    $Stopwatch.Stop()
-
-                    $Result = [PSCustomObject]@{
-
-                        Computer   = $Computer
-                        Command    = $Executable
-                        Success    = $true
-                        ExitCode   = 0
-                        TimedOut   = $false
-                        Output     = "Command executed successfully."
-                        Error      = ""
-                        DurationMS = $Stopwatch.ElapsedMilliseconds
-                        Timestamp  = Get-Date
-                    }
-
-                    Write-Log `
-                        -Level Success `
-                        -Message "Execution completed on $Computer"
-
-                    Show-ExecutionResult `
-                        -Status Success `
-                        -Message "Command executed successfully" `
-                        -Details @"
+                        Show-ExecutionResult `
+                            -Status Success `
+                            -Message "Command executed successfully" `
+                            -Details @"
 Computer : $($Result.Computer)
 Command  : $($Result.Command)
 ExitCode : $($Result.ExitCode)
@@ -279,17 +260,34 @@ Duration : $($Result.DurationMS) ms
 Output:
 $($Result.Output)
 "@
+                    }
+                    else {
 
+                        Write-Log `
+                            -Level Error `
+                            -Message "Execution failed on $Computer"
+
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "Command execution failed" `
+                            -Details @"
+Computer : $($Result.Computer)
+ExitCode : $($Result.ExitCode)
+
+Error:
+$($Result.Error)
+"@
+                    }
                 }
                 catch {
 
                     Write-Log `
                         -Level Error `
-                        -Message "Execution failed: $($_.Exception.Message)"
+                        -Message "Unexpected error during execution on $Computer : $($_.Exception.Message)"
 
                     Show-ExecutionResult `
                         -Status Error `
-                        -Message "Failed to execute command" `
+                        -Message "Unexpected execution error" `
                         -Details $_.Exception.Message
                 }
             }
@@ -389,6 +387,10 @@ function Invoke-SoftwareMenu {
             }
 
             0 {
+                Write-Log `
+                    -Level Info `
+                    -Message "SoftwareMenu: returning to main menu"
+
                 return
             }
         }
@@ -440,10 +442,14 @@ function Invoke-SettingsMenu {
             3 {
                 Show-ExecutionResult `
                     -Status Info `
-                    -Message "Universal Remote Toolkit"
+                    -Message "Universal Remote Toolkit v1.0 - Remote Administration Console"
             }
 
             0 {
+                Write-Log `
+                    -Level Info `
+                    -Message "SettingsMenu: returning to main menu"
+
                 return
             }
         }
@@ -481,14 +487,17 @@ function Start-UniversalRemoteToolkit {
         switch ($Choice) {
 
             1 {
+                Clear-Host
                 Invoke-ExecutionMenu
             }
 
             2 {
+                Clear-Host
                 Invoke-SoftwareMenu
             }
 
             3 {
+                Clear-Host
                 Invoke-SettingsMenu
             }
 

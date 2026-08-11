@@ -208,7 +208,7 @@ function Invoke-PsExecProcess {
             $null = $Process.Start()
 
             $OutputTask = $Process.StandardOutput.ReadToEndAsync()
-            $ErrorTask  = $Process.StandardError.ReadToEndAsync()
+            $ErrorTask = $Process.StandardError.ReadToEndAsync()
 
             $Completed = $Process.WaitForExit(
                 $TimeoutSeconds * 1000
