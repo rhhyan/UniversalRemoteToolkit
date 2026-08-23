@@ -252,14 +252,14 @@ function Invoke-ExecutionMenu {
                             -Status Success `
                             -Message "Command executed successfully" `
                             -Details @"
-Computer : $($Result.Computer)
-Command  : $($Result.Command)
-ExitCode : $($Result.ExitCode)
-Duration : $($Result.DurationMS) ms
+                            Computer : $($Result.Computer)
+                            Command  : $($Result.Command)
+                            ExitCode : $($Result.ExitCode)
+                            Duration : $($Result.DurationMS) ms
 
-Output:
-$($Result.Output)
-"@
+                            Output:
+                            $($Result.Output)
+                            "@
                     }
                     else {
 
