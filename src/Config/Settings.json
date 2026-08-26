@@ -3,32 +3,25 @@
         "Name": "Universal Remote Toolkit",
         "Version": "1.0.0"
     },
-
     "Company": {
         "Name": "Tahto"
     },
-
     "Paths": {
         "PsExec": ".\\Bin\\PsExec.exe",
         "Logs": ".\\Logs"
     },
-
     "Network": {
         "PingTimeout": 1000
     },
-
     "Logs": {
         "RetentionDays": 30,
         "EnableConsole": true
+    },
+    "Software": {
+        "RepositoryPath": "\\\\fsrctrppw01\\aplicativos",
+        "RemoteTempPath": "C:\\script_temp",
+        "SupportedInstallers": [".exe", ".msi", ".ps1"],
+        "DefaultInstallTimeout": 300,
+        "DefaultUninstallTimeout": 300
     }
-}
-
-{
-      "Software": {
-      "RepositoryPath": "\\\\fsrctrppw01\\aplicativos",
-      "RemoteTempPath": "C:\\script_temp",
-      "SupportedInstallers": [".exe", ".msi", ".ps1"],
-      "DefaultInstallTimeout": 300,
-      "DefaultUninstallTimeout": 300
-  }
 }

@@ -39,6 +39,7 @@ $ModulesToLoad = @(
     'Execution.psm1'
     'ConsoleUI.psm1'
     'Utils.psm1'
+    'Software.psm1'
 )
 
 foreach ($Module in $ModulesToLoad) {
@@ -369,21 +370,336 @@ function Invoke-SoftwareMenu {
         switch ($Choice) {
 
             1 {
-                Show-ExecutionResult `
-                    -Status Info `
-                    -Message "Software installation is under development."
+                # ------------------------------------------------
+                # Install software
+                # ------------------------------------------------
+
+                Write-Host ""
+                Write-Host "[>] Computer name: " `
+                    -ForegroundColor Yellow `
+                    -NoNewline
+
+                $Computer = Read-Host
+
+                if ([string]::IsNullOrWhiteSpace($Computer)) {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Software installation cancelled by user"
+                    continue
+                }
+
+                Write-Host "[>] Software name (to search): " `
+                    -ForegroundColor Yellow `
+                    -NoNewline
+
+                $SoftwareName = Read-Host
+
+                if ([string]::IsNullOrWhiteSpace($SoftwareName)) {
+                    Write-Log `
+                        -Level Warning `
+                        -Message "Software name was empty"
+
+                    Show-ExecutionResult `
+                        -Status Warning `
+                        -Message "Software name cannot be empty"
+
+                    continue
+                }
+
+                try {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Starting software installation workflow"
+
+                    # Step 1: Search for installer
+                    Write-Host "`n[*] Searching for installer..." -ForegroundColor Cyan
+                    $Installer = Find-SoftwareInstaller -SoftwareName $SoftwareName
+
+                    if (-not $Installer) {
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "Installer not found" `
+                            -Details "No matching installer found in repository for: $SoftwareName"
+                        continue
+                    }
+
+                    Write-Host "[✓] Installer found: $($Installer.Name)" -ForegroundColor Green
+
+                    # Step 2: Copy to remote
+                    Write-Host "`n[*] Copying installer to remote computer..." -ForegroundColor Cyan
+                    $CopyResult = Copy-SoftwareToRemote `
+                        -ComputerName $Computer `
+                        -InstallerPath $Installer.FullPath
+
+                    if (-not $CopyResult.Success) {
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "Failed to copy installer" `
+                            -Details $CopyResult.Error
+                        continue
+                    }
+
+                    Write-Host "[✓] Installer copied successfully" -ForegroundColor Green
+
+                    # Step 3: Optional arguments
+                    Write-Host "`n[>] Installation arguments (optional): " `
+                        -ForegroundColor Yellow `
+                        -NoNewline
+
+                    $Arguments = Read-Host
+
+                    # Step 4: Execute installation
+                    Write-Host "`n[*] Installing software on $Computer..." -ForegroundColor Cyan
+                    $InstallResult = Install-RemoteSoftware `
+                        -ComputerName $Computer `
+                        -InstallerPath $CopyResult.LocalPathOnly `
+                        -Arguments $Arguments
+
+                    if ($InstallResult.Success) {
+                        Write-Log `
+                            -Level Info `
+                            -Message "Installation completed successfully on $Computer"
+
+                        Show-ExecutionResult `
+                            -Status Success `
+                            -Message "Software installed successfully" `
+                            -Details @"
+Computer       : $($InstallResult.ComputerName)
+Software       : $SoftwareName
+Installer      : $($Installer.Name)
+Exit Code      : $($InstallResult.ExitCode)
+Duration       : $($InstallResult.Duration) ms
+
+Output:
+$($InstallResult.Output)
+"@
+                    }
+                    else {
+                        Write-Log `
+                            -Level Error `
+                            -Message "Installation failed on $Computer"
+
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "Installation failed" `
+                            -Details @"
+Computer  : $($InstallResult.ComputerName)
+Software  : $SoftwareName
+Exit Code : $($InstallResult.ExitCode)
+
+Error:
+$($InstallResult.Error)
+"@
+                    }
+                }
+                catch {
+                    Write-Log `
+                        -Level Error `
+                        -Message "Unexpected error during installation: $($_.Exception.Message)"
+
+                    Show-ExecutionResult `
+                        -Status Error `
+                        -Message "Unexpected installation error" `
+                        -Details $_.Exception.Message
+                }
             }
 
             2 {
-                Show-ExecutionResult `
-                    -Status Info `
-                    -Message "Software removal is under development."
+                # ------------------------------------------------
+                # Uninstall software
+                # ------------------------------------------------
+
+                Write-Host ""
+                Write-Host "[>] Computer name: " `
+                    -ForegroundColor Yellow `
+                    -NoNewline
+
+                $Computer = Read-Host
+
+                if ([string]::IsNullOrWhiteSpace($Computer)) {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Software uninstall cancelled by user"
+                    continue
+                }
+
+                Write-Host "[>] Software name (to search): " `
+                    -ForegroundColor Yellow `
+                    -NoNewline
+
+                $SoftwareName = Read-Host
+
+                if ([string]::IsNullOrWhiteSpace($SoftwareName)) {
+                    Write-Log `
+                        -Level Warning `
+                        -Message "Software name was empty"
+
+                    Show-ExecutionResult `
+                        -Status Warning `
+                        -Message "Software name cannot be empty"
+
+                    continue
+                }
+
+                try {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Starting software uninstall workflow"
+
+                    # Step 1: Get uninstall command
+                    Write-Host "`n[*] Searching for software..." -ForegroundColor Cyan
+                    $Software = Get-SoftwareUninstallCommand `
+                        -ComputerName $Computer `
+                        -SoftwareName $SoftwareName
+
+                    if (-not $Software) {
+                        Show-ExecutionResult `
+                            -Status Warning `
+                            -Message "Software not found" `
+                            -Details "No software matching '$SoftwareName' found on $Computer"
+                        continue
+                    }
+
+                    Write-Host "[✓] Software found: $($Software.Name)" -ForegroundColor Green
+                    Write-Host "   Version: $($Software.Version)" -ForegroundColor Gray
+
+                    # Step 2: Confirm uninstall
+                    Write-Host "`n[!] Are you sure you want to uninstall this software? (yes/no): " `
+                        -ForegroundColor Yellow `
+                        -NoNewline
+
+                    $Confirm = Read-Host
+
+                    if ($Confirm -ne "yes") {
+                        Write-Log `
+                            -Level Info `
+                            -Message "Uninstall cancelled by user"
+
+                        Show-ExecutionResult `
+                            -Status Info `
+                            -Message "Uninstall cancelled"
+                        continue
+                    }
+
+                    # Step 3: Execute uninstall
+                    Write-Host "`n[*] Uninstalling software on $Computer..." -ForegroundColor Cyan
+                    $UninstallResult = Uninstall-RemoteSoftware `
+                        -ComputerName $Computer `
+                        -UninstallCommand $Software.UninstallString
+
+                    if ($UninstallResult.Success) {
+                        Write-Log `
+                            -Level Info `
+                            -Message "Uninstall completed successfully on $Computer"
+
+                        Show-ExecutionResult `
+                            -Status Success `
+                            -Message "Software uninstalled successfully" `
+                            -Details @"
+Computer   : $($UninstallResult.ComputerName)
+Software   : $($Software.Name)
+Version    : $($Software.Version)
+Exit Code  : $($UninstallResult.ExitCode)
+Duration   : $($UninstallResult.Duration) ms
+
+Output:
+$($UninstallResult.Output)
+"@
+                    }
+                    else {
+                        Write-Log `
+                            -Level Error `
+                            -Message "Uninstall failed on $Computer"
+
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "Uninstall failed" `
+                            -Details @"
+Computer  : $($UninstallResult.ComputerName)
+Software  : $($Software.Name)
+Exit Code : $($UninstallResult.ExitCode)
+
+Error:
+$($UninstallResult.Error)
+"@
+                    }
+                }
+                catch {
+                    Write-Log `
+                        -Level Error `
+                        -Message "Unexpected error during uninstall: $($_.Exception.Message)"
+
+                    Show-ExecutionResult `
+                        -Status Error `
+                        -Message "Unexpected uninstall error" `
+                        -Details $_.Exception.Message
+                }
             }
 
             3 {
-                Show-ExecutionResult `
-                    -Status Info `
-                    -Message "Installed software listing is under development."
+                # ------------------------------------------------
+                # List installed software
+                # ------------------------------------------------
+
+                Write-Host ""
+                Write-Host "[>] Computer name: " `
+                    -ForegroundColor Yellow `
+                    -NoNewline
+
+                $Computer = Read-Host
+
+                if ([string]::IsNullOrWhiteSpace($Computer)) {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Software list cancelled by user"
+                    continue
+                }
+
+                try {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Fetching installed software from $Computer"
+
+                    Write-Host "`n[*] Querying installed software on $Computer..." -ForegroundColor Cyan
+                    $InstalledSoftware = Get-InstalledSoftware -ComputerName $Computer
+
+                    if ($InstalledSoftware.Count -eq 0) {
+                        Show-ExecutionResult `
+                            -Status Warning `
+                            -Message "No software found" `
+                            -Details "Could not retrieve software list from $Computer"
+                        continue
+                    }
+
+                    Write-Log `
+                        -Level Info `
+                        -Message "Retrieved $(@($InstalledSoftware).Count) software entries from $Computer"
+
+                    # Format and display software list
+                    $SoftwareList = $InstalledSoftware | ForEach-Object {
+                        $Version = if ($_.Version) { $_.Version } else { "N/A" }
+                        "  • $($_.Name) (v$Version)"
+                    }
+
+                    Show-ExecutionResult `
+                        -Status Success `
+                        -Message "Installed software on $Computer" `
+                        -Details @"
+Total software installed: $(@($InstalledSoftware).Count)
+
+$($SoftwareList -join "`n")
+"@
+                }
+                catch {
+                    Write-Log `
+                        -Level Error `
+                        -Message "Unexpected error listing software: $($_.Exception.Message)"
+
+                    Show-ExecutionResult `
+                        -Status Error `
+                        -Message "Error listing software" `
+                        -Details $_.Exception.Message
+                }
             }
 
             0 {
