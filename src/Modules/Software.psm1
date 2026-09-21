@@ -92,31 +92,33 @@ function Get-SoftwareRepository {
             # Find installers
             # ------------------------------------------------
 
-            $Installers = @()
+            $NormalizedExtensions = @(
+                $SUPPORTED_INSTALLERS |
+                    ForEach-Object {
 
-            foreach ($Extension in $SUPPORTED_INSTALLERS) {
+                        $NormalizedExtension = $_.ToLower()
 
-                $NormalizedExtension = $Extension.ToLower()
+                        if (-not $NormalizedExtension.StartsWith(".")) {
+                            $NormalizedExtension = ".$NormalizedExtension"
+                        }
 
-                if (-not $NormalizedExtension.StartsWith(".")) {
-                    $NormalizedExtension = ".$NormalizedExtension"
-                }
+                        $NormalizedExtension
+                    }
+            )
 
 
-                $Files = Get-ChildItem `
+            # Single recursive pass over the repository, filtered in memory,
+            # instead of one full recursive scan per supported extension.
+            $Installers = @(
+                Get-ChildItem `
                     -Path $REPOSITORY_PATH `
                     -File `
                     -Recurse `
                     -ErrorAction Stop |
                     Where-Object {
-                        $_.Extension.ToLower() -eq $NormalizedExtension
+                        $_.Extension.ToLower() -in $NormalizedExtensions
                     }
-
-
-                if ($Files) {
-                    $Installers += $Files
-                }
-            }
+            )
 
 
             # ------------------------------------------------
@@ -786,6 +788,71 @@ function Install-RemoteSoftware {
 
 
 # ============================================================
+# INSTALL WORKFLOW RESULT HELPER
+# ============================================================
+
+<#
+.SYNOPSIS
+    Builds a consistently-shaped result object for Install-Software.
+
+.DESCRIPTION
+    Internal helper ensuring every return path of Install-Software
+    exposes the same set of properties, regardless of which step of
+    the workflow produced the result.
+
+.OUTPUTS
+    PSCustomObject
+#>
+
+function New-InstallWorkflowResult {
+
+    [CmdletBinding()]
+
+    param(
+        [bool]$Success = $false,
+        [bool]$RequiresSelection = $false,
+        [string]$ComputerName,
+        [string]$SoftwareName,
+        $Installer = $null,
+        [array]$Installers = @(),
+        [string]$LocalPath = $null,
+        [string]$RemotePath = $null,
+        [string]$InstallerPath = $null,
+        [string]$InstallCommand = $null,
+        $ExitCode = $null,
+        [bool]$RebootRequired = $false,
+        [bool]$TimedOut = $false,
+        $Output = $null,
+        [string]$Error = $null,
+        $Duration = $null,
+        $WorkflowDuration = $null
+    )
+
+    [PSCustomObject]@{
+
+        Success = $Success
+        RequiresSelection = $RequiresSelection
+        ComputerName = $ComputerName
+        SoftwareName = $SoftwareName
+        Installer = $Installer
+        Installers = $Installers
+        LocalPath = $LocalPath
+        RemotePath = $RemotePath
+        InstallerPath = $InstallerPath
+        InstallCommand = $InstallCommand
+        ExitCode = $ExitCode
+        RebootRequired = $RebootRequired
+        TimedOut = $TimedOut
+        Output = $Output
+        Error = $Error
+        Duration = $Duration
+        WorkflowDuration = $WorkflowDuration
+        Timestamp = Get-Date
+    }
+}
+
+
+# ============================================================
 # INSTALL SOFTWARE WORKFLOW
 # ============================================================
 
@@ -888,28 +955,11 @@ function Install-Software {
 
             if ($Installers.Count -eq 0) {
 
-                return [PSCustomObject]@{
-
-                    Success = $false
-
-                    RequiresSelection = $false
-
-                    ComputerName = $ComputerName
-
-                    SoftwareName = $SoftwareName
-
-                    Installer = $null
-
-                    Installers = @()
-
-                    Error = "No installer found for: $SoftwareName"
-
-                    ExitCode = $null
-
-                    Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                    Timestamp = Get-Date
-                }
+                return New-InstallWorkflowResult `
+                    -ComputerName $ComputerName `
+                    -SoftwareName $SoftwareName `
+                    -Error "No installer found for: $SoftwareName" `
+                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
             }
 
 
@@ -924,28 +974,12 @@ function Install-Software {
                     -Message "Multiple installers found for $SoftwareName. Selection required."
 
 
-                return [PSCustomObject]@{
-
-                    Success = $false
-
-                    RequiresSelection = $true
-
-                    ComputerName = $ComputerName
-
-                    SoftwareName = $SoftwareName
-
-                    Installer = $null
-
-                    Installers = $Installers
-
-                    Error = $null
-
-                    ExitCode = $null
-
-                    Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                    Timestamp = Get-Date
-                }
+                return New-InstallWorkflowResult `
+                    -RequiresSelection $true `
+                    -ComputerName $ComputerName `
+                    -SoftwareName $SoftwareName `
+                    -Installers $Installers `
+                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
             }
 
 
@@ -967,28 +1001,13 @@ function Install-Software {
 
             if (-not $CopyResult.Success) {
 
-                return [PSCustomObject]@{
-
-                    Success = $false
-
-                    RequiresSelection = $false
-
-                    ComputerName = $ComputerName
-
-                    SoftwareName = $SoftwareName
-
-                    Installer = $Installer
-
-                    Installers = $Installers
-
-                    Error = $CopyResult.Error
-
-                    ExitCode = $null
-
-                    Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                    Timestamp = Get-Date
-                }
+                return New-InstallWorkflowResult `
+                    -ComputerName $ComputerName `
+                    -SoftwareName $SoftwareName `
+                    -Installer $Installer `
+                    -Installers $Installers `
+                    -Error $CopyResult.Error `
+                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
             }
 
 
@@ -1007,44 +1026,23 @@ function Install-Software {
             # Consolidated result
             # ------------------------------------------------
 
-            return [PSCustomObject]@{
-
-                Success = $InstallResult.Success
-
-                RequiresSelection = $false
-
-                ComputerName = $ComputerName
-
-                SoftwareName = $SoftwareName
-
-                Installer = $Installer
-
-                Installers = $Installers
-
-                LocalPath = $Installer.FullPath
-
-                RemotePath = $CopyResult.RemotePath
-
-                InstallerPath = $CopyResult.LocalPathOnly
-
-                InstallCommand = $InstallResult.InstallCommand
-
-                ExitCode = $InstallResult.ExitCode
-
-                RebootRequired = $InstallResult.RebootRequired
-
-                TimedOut = $InstallResult.TimedOut
-
-                Output = $InstallResult.Output
-
-                Error = $InstallResult.Error
-
-                Duration = $InstallResult.Duration
-
-                WorkflowDuration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                Timestamp = Get-Date
-            }
+            return New-InstallWorkflowResult `
+                -Success $InstallResult.Success `
+                -ComputerName $ComputerName `
+                -SoftwareName $SoftwareName `
+                -Installer $Installer `
+                -Installers $Installers `
+                -LocalPath $Installer.FullPath `
+                -RemotePath $CopyResult.RemotePath `
+                -InstallerPath $CopyResult.LocalPathOnly `
+                -InstallCommand $InstallResult.InstallCommand `
+                -ExitCode $InstallResult.ExitCode `
+                -RebootRequired $InstallResult.RebootRequired `
+                -TimedOut $InstallResult.TimedOut `
+                -Output $InstallResult.Output `
+                -Error $InstallResult.Error `
+                -Duration $InstallResult.Duration `
+                -WorkflowDuration ((Get-Date) - $WorkflowStart).TotalMilliseconds
         }
 
         catch {
@@ -1054,28 +1052,11 @@ function Install-Software {
                 -Message "Software installation workflow failed: $($_.Exception.Message)"
 
 
-            return [PSCustomObject]@{
-
-                Success = $false
-
-                RequiresSelection = $false
-
-                ComputerName = $ComputerName
-
-                SoftwareName = $SoftwareName
-
-                Installer = $null
-
-                Installers = @()
-
-                Error = $_.Exception.Message
-
-                ExitCode = $null
-
-                Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                Timestamp = Get-Date
-            }
+            return New-InstallWorkflowResult `
+                -ComputerName $ComputerName `
+                -SoftwareName $SoftwareName `
+                -Error $_.Exception.Message `
+                -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
         }
     }
 }
@@ -1149,6 +1130,25 @@ $RegPaths = @(
     "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
 )
 
+# Include per-user installs (e.g. VS Code, Zoom, Node) by scanning every
+# currently loaded user hive under HKEY_USERS. Hives of users who are not
+# logged in are not loaded and therefore cannot be inspected this way.
+if (-not (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue)) {
+    New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS -ErrorAction SilentlyContinue |
+        Out-Null
+}
+
+if (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue) {
+
+    $UserSids = Get-ChildItem -Path "HKU:\" -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^S-1-5-21-\d+-\d+-\d+-\d+$' } |
+        Select-Object -ExpandProperty PSChildName
+
+    foreach ($Sid in $UserSids) {
+        $RegPaths += "HKU:\$Sid\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    }
+}
+
 $InstalledApps = @()
 
 foreach ($RegPath in $RegPaths) {
@@ -1173,6 +1173,7 @@ foreach ($RegPath in $RegPaths) {
                         UninstallString       = $UninstallString
                         QuietUninstallString  = $QuietUninstallString
                         RegistryPath          = $_.PSPath
+                        Scope                 = if ($RegPath -like "HKU:*") { "User" } else { "Machine" }
                     }
                 }
             }
@@ -1431,7 +1432,6 @@ function New-SoftwareUninstallCommand {
 
         # Convert MSI install/repair switch to uninstall.
         $Command = $Command -replace "(?i)\s/I(?=\s|\{)", " /X"
-        $Command = $Command -replace "(?i)\s/i(?=\s|\{)", " /X"
 
 
         # Add quiet execution if not already supplied.
@@ -1654,6 +1654,63 @@ function Uninstall-RemoteSoftware {
 
 
 # ============================================================
+# UNINSTALL WORKFLOW RESULT HELPER
+# ============================================================
+
+<#
+.SYNOPSIS
+    Builds a consistently-shaped result object for Uninstall-Software.
+
+.DESCRIPTION
+    Internal helper ensuring every return path of Uninstall-Software
+    exposes the same set of properties, regardless of which step of
+    the workflow produced the result.
+
+.OUTPUTS
+    PSCustomObject
+#>
+
+function New-UninstallWorkflowResult {
+
+    [CmdletBinding()]
+
+    param(
+        [bool]$Success = $false,
+        [bool]$RequiresSelection = $false,
+        [string]$ComputerName,
+        [string]$SoftwareName,
+        $Software = @(),
+        [string]$UninstallCommand = $null,
+        $ExitCode = $null,
+        [bool]$RebootRequired = $false,
+        [bool]$TimedOut = $false,
+        $Output = $null,
+        [string]$Error = $null,
+        $Duration = $null,
+        $WorkflowDuration = $null
+    )
+
+    [PSCustomObject]@{
+
+        Success = $Success
+        RequiresSelection = $RequiresSelection
+        ComputerName = $ComputerName
+        SoftwareName = $SoftwareName
+        Software = $Software
+        UninstallCommand = $UninstallCommand
+        ExitCode = $ExitCode
+        RebootRequired = $RebootRequired
+        TimedOut = $TimedOut
+        Output = $Output
+        Error = $Error
+        Duration = $Duration
+        WorkflowDuration = $WorkflowDuration
+        Timestamp = Get-Date
+    }
+}
+
+
+# ============================================================
 # UNINSTALL SOFTWARE WORKFLOW
 # ============================================================
 
@@ -1746,28 +1803,11 @@ function Uninstall-Software {
 
             if ($Matches.Count -eq 0) {
 
-                return [PSCustomObject]@{
-
-                    Success = $false
-
-                    RequiresSelection = $false
-
-                    ComputerName = $ComputerName
-
-                    SoftwareName = $SoftwareName
-
-                    Software = @()
-
-                    UninstallCommand = $null
-
-                    ExitCode = $null
-
-                    Error = "No installed software found matching: $SoftwareName"
-
-                    Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                    Timestamp = Get-Date
-                }
+                return New-UninstallWorkflowResult `
+                    -ComputerName $ComputerName `
+                    -SoftwareName $SoftwareName `
+                    -Error "No installed software found matching: $SoftwareName" `
+                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
             }
 
 
@@ -1782,28 +1822,12 @@ function Uninstall-Software {
                     -Message "Multiple installed software matches found for $SoftwareName. Selection required."
 
 
-                return [PSCustomObject]@{
-
-                    Success = $false
-
-                    RequiresSelection = $true
-
-                    ComputerName = $ComputerName
-
-                    SoftwareName = $SoftwareName
-
-                    Software = $Matches
-
-                    UninstallCommand = $null
-
-                    ExitCode = $null
-
-                    Error = $null
-
-                    Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                    Timestamp = Get-Date
-                }
+                return New-UninstallWorkflowResult `
+                    -RequiresSelection $true `
+                    -ComputerName $ComputerName `
+                    -SoftwareName $SoftwareName `
+                    -Software $Matches `
+                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
             }
 
 
@@ -1825,28 +1849,12 @@ function Uninstall-Software {
                     $Software.QuietUninstallString
                 )) {
 
-                return [PSCustomObject]@{
-
-                    Success = $false
-
-                    RequiresSelection = $false
-
-                    ComputerName = $ComputerName
-
-                    SoftwareName = $SoftwareName
-
-                    Software = $Software
-
-                    UninstallCommand = $null
-
-                    ExitCode = $null
-
-                    Error = "No uninstall command is registered for $($Software.Name)"
-
-                    Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                    Timestamp = Get-Date
-                }
+                return New-UninstallWorkflowResult `
+                    -ComputerName $ComputerName `
+                    -SoftwareName $SoftwareName `
+                    -Software $Software `
+                    -Error "No uninstall command is registered for $($Software.Name)" `
+                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
             }
 
 
@@ -1884,36 +1892,19 @@ function Uninstall-Software {
             # Consolidated result
             # ------------------------------------------------
 
-            return [PSCustomObject]@{
-
-                Success = $UninstallResult.Success
-
-                RequiresSelection = $false
-
-                ComputerName = $ComputerName
-
-                SoftwareName = $SoftwareName
-
-                Software = $Software
-
-                UninstallCommand = $UninstallResult.UninstallCmd
-
-                ExitCode = $UninstallResult.ExitCode
-
-                RebootRequired = $UninstallResult.RebootRequired
-
-                TimedOut = $UninstallResult.TimedOut
-
-                Output = $UninstallResult.Output
-
-                Error = $UninstallResult.Error
-
-                Duration = $UninstallResult.Duration
-
-                WorkflowDuration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                Timestamp = Get-Date
-            }
+            return New-UninstallWorkflowResult `
+                -Success $UninstallResult.Success `
+                -ComputerName $ComputerName `
+                -SoftwareName $SoftwareName `
+                -Software $Software `
+                -UninstallCommand $UninstallResult.UninstallCmd `
+                -ExitCode $UninstallResult.ExitCode `
+                -RebootRequired $UninstallResult.RebootRequired `
+                -TimedOut $UninstallResult.TimedOut `
+                -Output $UninstallResult.Output `
+                -Error $UninstallResult.Error `
+                -Duration $UninstallResult.Duration `
+                -WorkflowDuration ((Get-Date) - $WorkflowStart).TotalMilliseconds
         }
 
         catch {
@@ -1923,28 +1914,11 @@ function Uninstall-Software {
                 -Message "Software uninstallation workflow failed: $($_.Exception.Message)"
 
 
-            return [PSCustomObject]@{
-
-                Success = $false
-
-                RequiresSelection = $false
-
-                ComputerName = $ComputerName
-
-                SoftwareName = $SoftwareName
-
-                Software = @()
-
-                UninstallCommand = $null
-
-                ExitCode = $null
-
-                Error = $_.Exception.Message
-
-                Duration = ((Get-Date) - $WorkflowStart).TotalMilliseconds
-
-                Timestamp = Get-Date
-            }
+            return New-UninstallWorkflowResult `
+                -ComputerName $ComputerName `
+                -SoftwareName $SoftwareName `
+                -Error $_.Exception.Message `
+                -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
         }
     }
 }
