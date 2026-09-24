@@ -4,6 +4,41 @@
     start logs URT
 #>
 
+function Remove-OldLogFiles {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$LogsPath,
+
+        [Parameter(Mandatory)]
+        [int]$RetentionDays
+    )
+
+    process {
+        try {
+            $CutoffDate = (Get-Date).AddDays(-$RetentionDays)
+
+            $OldLogFiles = Get-ChildItem `
+                -Path $LogsPath `
+                -Filter "*.log" `
+                -File `
+                -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt $CutoffDate }
+
+            foreach ($LogFile in $OldLogFiles) {
+                Remove-Item -Path $LogFile.FullName -Force -ErrorAction SilentlyContinue
+            }
+
+            return @($OldLogFiles).Count
+        }
+        catch {
+            Write-Verbose "Falha ao rotacionar logs antigos: $($_.Exception.Message)"
+            return 0
+        }
+    }
+}
+
 function Start-Log {
 
     [CmdletBinding()]
@@ -23,6 +58,24 @@ function Start-Log {
             New-Item -ItemType Directory -Path $LogsPath -Force | Out-Null
         }
 
+        # Remove logs além do período de retenção configurado
+        $RetentionDays = 30
+
+        try {
+            $Config = Get-ToolkitConfig
+
+            if ($Config.Logs.RetentionDays) {
+                $RetentionDays = $Config.Logs.RetentionDays
+            }
+        }
+        catch {
+            Write-Verbose "Não foi possível ler RetentionDays da configuração. Usando padrão: $RetentionDays dias."
+        }
+
+        $RemovedCount = Remove-OldLogFiles `
+            -LogsPath $LogsPath `
+            -RetentionDays $RetentionDays
+
         # Nome do arquivo
         $Timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
         $LogFileName = "URT_$Timestamp.log"
@@ -37,6 +90,12 @@ function Start-Log {
         $script:LogSession = @{
             StartedAt = Get-Date
             LogFile   = $LogFilePath
+        }
+
+        if ($RemovedCount -gt 0) {
+            Write-Log `
+                -Level Info `
+                -Message "Rotação de logs: $RemovedCount arquivo(s) com mais de $RetentionDays dia(s) removido(s)."
         }
 
         Write-Verbose "Sessão de log iniciada."
