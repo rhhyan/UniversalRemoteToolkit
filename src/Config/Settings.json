@@ -22,6 +22,7 @@
         "RemoteTempPath": "C:\\script_temp",
         "SupportedInstallers": [".exe", ".msi", ".ps1"],
         "DefaultInstallTimeout": 300,
-        "DefaultUninstallTimeout": 300
+        "DefaultUninstallTimeout": 300,
+        "UninstallVerifyTimeout": 60
     }
 }

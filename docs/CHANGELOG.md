@@ -19,10 +19,18 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Desinstalador universal (`Resolve-UninstallCommand`): detecta MSI, Inno Setup, NSIS, Chromium, Squirrel e InstallShield e aplica o modo silencioso de cada um; para desinstaladores desconhecidos, pede os argumentos silenciosos
+- Verificação pós-desinstalação: aguarda a chave do programa sumir do registro (`Software.UninstallVerifyTimeout`), cobrindo desinstaladores que retornam antes de terminar (NSIS, Squirrel) e falsos sucessos (ex.: MSI 1605)
+- Listagem inclui instalações por usuário (perfis carregados em `HKEY_USERS`), com escopo, fabricante e ProductCode; ignora componentes de sistema e atualizações
+- Em caso de timeout, o processo do desinstalador é encerrado na máquina remota
 - Seleção entre múltiplos resultados na instalação/desinstalação (antes usava o primeiro silenciosamente)
 - Uso de `QuietUninstallString` quando disponível
 - Remoção do instalador copiado para a máquina remota após a instalação
 - Indicação de reinicialização pendente no resultado
+
+### Fixed (desinstalação)
+
+- `cmd /c` quebrava comandos com caminho entre aspas e argumentos; o executável agora é chamado diretamente (cmd só quando há `%VARIAVEL%`)
 
 ### Improved
 

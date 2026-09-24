@@ -17,6 +17,12 @@ $SUPPORTED_INSTALLERS = $Config.Software.SupportedInstallers
 $DEFAULT_INSTALL_TIMEOUT = $Config.Software.DefaultInstallTimeout
 $DEFAULT_UNINSTALL_TIMEOUT = $Config.Software.DefaultUninstallTimeout
 
+# Tempo máximo aguardando o programa sumir do registro após a desinstalação
+$VERIFY_TIMEOUT = if ($Config.Software.UninstallVerifyTimeout) { [int]$Config.Software.UninstallVerifyTimeout } else { 60 }
+$VERIFY_INTERVAL = 5
+
+$GUID_PATTERN = '\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}'
+
 # Códigos de saída do Windows Installer que indicam sucesso
 #   0    = sucesso
 #   3010 = sucesso, reinicialização necessária
@@ -456,47 +462,47 @@ function Get-InstalledSoftware {
                 -Level Info `
                 -Message "Querying installed software on $ComputerName"
 
-            # PowerShell script para executar remotamente
-            # Usar aspas simples e escapar corretamente para remoto
-            $QueryScript = @"
+            # Script executado remotamente (aspas simples: nada é expandido
+            # localmente). Lê HKLM (64/32 bits) e os perfis carregados em
+            # HKEY_USERS, para enxergar também instalações por usuário.
+            $QueryScript = @'
 try {
-    `$RegPaths = @(
-        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
-        'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    $Sources = @(
+        @{ Path = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'; Scope = 'Machine' },
+        @{ Path = 'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'; Scope = 'Machine (x86)' }
     )
-
-    `$InstalledApps = @()
-
-    foreach (`$RegPath in `$RegPaths) {
-        if (Test-Path `$RegPath) {
-            Get-ChildItem `$RegPath -ErrorAction SilentlyContinue | ForEach-Object {
-                `$DisplayName = `$_.GetValue('DisplayName')
-                `$DisplayVersion = `$_.GetValue('DisplayVersion')
-                `$UninstallString = `$_.GetValue('UninstallString')
-                `$QuietUninstallString = `$_.GetValue('QuietUninstallString')
-
-                if (`$DisplayName) {
-                    `$InstalledApps += [PSCustomObject]@{
-                        Name             = `$DisplayName
-                        Version          = `$DisplayVersion
-                        UninstallString  = `$UninstallString
-                        QuietUninstallString = `$QuietUninstallString
-                        RegistryPath     = `$_.PSPath
-                    }
-                }
+    Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^S-1-5-21-[\d-]+$' } |
+        ForEach-Object {
+            $Sid = $_.PSChildName
+            $User = try { ([System.Security.Principal.SecurityIdentifier]$Sid).Translate([System.Security.Principal.NTAccount]).Value } catch { $Sid }
+            $Sources += @{ Path = "Registry::HKEY_USERS\$Sid\Software\Microsoft\Windows\CurrentVersion\Uninstall"; Scope = "User ($User)" }
+        }
+    $Apps = @()
+    foreach ($Source in $Sources) {
+        if (-not (Test-Path $Source.Path)) { continue }
+        Get-ChildItem $Source.Path -ErrorAction SilentlyContinue | ForEach-Object {
+            $Name = $_.GetValue('DisplayName')
+            if (-not $Name -or $_.GetValue('SystemComponent') -eq 1 -or $_.GetValue('ParentKeyName')) { return }
+            $Apps += [PSCustomObject]@{
+                Name                 = $Name
+                Version              = $_.GetValue('DisplayVersion')
+                Publisher            = $_.GetValue('Publisher')
+                Scope                = $Source.Scope
+                KeyName              = $_.PSChildName
+                WindowsInstaller     = $_.GetValue('WindowsInstaller')
+                InstallLocation      = $_.GetValue('InstallLocation')
+                UninstallString      = $_.GetValue('UninstallString')
+                QuietUninstallString = $_.GetValue('QuietUninstallString')
+                RegistryPath         = $_.PSPath
             }
         }
     }
-
-    if (`$InstalledApps.Count -gt 0) {
-        `$InstalledApps | Sort-Object Name | ConvertTo-Json -Depth 3
-    } else {
-        Write-Output '[]'
-    }
+    if ($Apps.Count -gt 0) { $Apps | Sort-Object Name | ConvertTo-Json -Depth 3 } else { '[]' }
 } catch {
-    Write-Output '[]'
+    '[]'
 }
-"@
+'@
 
             # Executa o script remotamente
             # Escapar o script para ser transmitido via PsExec
@@ -656,34 +662,209 @@ function Get-SoftwareUninstallCommand {
 }
 
 # ============================================================
-# UNINSTALL SOFTWARE
+# RESOLVE UNINSTALL COMMAND
 # ============================================================
 
 <#
 .SYNOPSIS
-    Uninstalls software from a remote computer.
+    Splits a registry command line into executable and arguments.
 
 .DESCRIPTION
-    Executes the uninstall command for a specified software on a
-    remote computer using PsExec.
+    Handles quoted paths ("C:\Program Files\App\unins000.exe" /x) and
+    unquoted paths containing spaces (C:\Program Files\App\uninst.exe /S).
+#>
+function Split-UninstallCommandLine {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$CommandLine
+    )
 
-.PARAMETER ComputerName
-    Name of the remote computer.
+    $Text = $CommandLine.Trim()
 
-.PARAMETER UninstallCommand
-    The uninstall command to execute.
+    if ($Text.StartsWith('"')) {
+        $End = $Text.IndexOf('"', 1)
 
-.PARAMETER TimeoutSeconds
-    Maximum execution time in seconds (default: 300).
+        if ($End -gt 0) {
+            return [PSCustomObject]@{
+                Executable = $Text.Substring(1, $End - 1)
+                Arguments  = $Text.Substring($End + 1).Trim()
+            }
+        }
 
-.OUTPUTS
-    System.Object
-    Returns uninstallation result with status and details.
+        $Text = $Text.Trim('"')
+    }
+
+    # Caminho sem aspas: o menor prefixo terminado em .exe seguido de espaço
+    $Match = [regex]::Match(
+        $Text,
+        '^(.+?\.(?:exe|cmd|bat|com))(?:\s+(.*))?$',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+
+    if ($Match.Success) {
+        return [PSCustomObject]@{
+            Executable = $Match.Groups[1].Value.Trim()
+            Arguments  = $Match.Groups[2].Value.Trim()
+        }
+    }
+
+    $Parts = $Text -split '\s+', 2
+
+    [PSCustomObject]@{
+        Executable = $Parts[0]
+        Arguments  = if ($Parts.Count -gt 1) { $Parts[1] } else { "" }
+    }
+}
+
+<#
+.SYNOPSIS
+    Builds a silent uninstall command for an installed program.
+
+.DESCRIPTION
+    Identifies the installer technology from the registry entry
+    returned by Get-InstalledSoftware and adds the matching silent
+    switches:
+
+      MSI              msiexec /x {GUID} /qn /norestart
+      QuietUninstall   vendor-provided silent command, used as is
+      Inno Setup       /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+      NSIS             /S
+      Chromium         --force-uninstall (Chrome, Edge, ...)
+      Squirrel         -s (Teams classic, Discord, Slack, ...)
+      InstallShield    no silent mode without a response file
+      Generic          command as registered (may show UI)
+
+    PsExec runs without a desktop session, so an uninstaller that waits
+    for user input hangs until the timeout. Silent reports whether a
+    silent switch is known for this uninstaller.
+
+.PARAMETER Software
+    Entry returned by Get-InstalledSoftware (or any object with an
+    UninstallString property).
 
 .EXAMPLE
-    Uninstall-RemoteSoftware -ComputerName "PC-001" -UninstallCommand "MsiExec.exe /X{GUID} /quiet /norestart"
+    Get-InstalledSoftware -ComputerName "PC-001" |
+        Where-Object Name -like "*7-Zip*" |
+        Resolve-UninstallCommand
 #>
-function Uninstall-RemoteSoftware {
+function Resolve-UninstallCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object]$Software
+    )
+
+    process {
+        $UninstallString = [string]$Software.UninstallString
+        $QuietString = [string]$Software.QuietUninstallString
+        $KeyName = [string]$Software.KeyName
+
+        $NewPlan = {
+            param($Type, $Executable, $Arguments, $Silent)
+
+            $Arguments = ([string]$Arguments).Trim()
+            $Display = if ($Executable -match '\s') { "`"$Executable`"" } else { $Executable }
+
+            [PSCustomObject]@{
+                InstallerType = $Type
+                Executable    = $Executable
+                Arguments     = $Arguments
+                Silent        = $Silent
+                CommandLine   = "$Display $Arguments".Trim()
+            }
+        }
+
+        # MSI: a chave do registro é o ProductCode; /I{GUID} abriria a tela
+        # de "modificar", então sempre usa /x silencioso.
+        $ProductCode = $null
+
+        if ($KeyName -match "^$GUID_PATTERN$" -and ($Software.WindowsInstaller -eq 1 -or $UninstallString -match 'msiexec')) {
+            $ProductCode = $KeyName
+        }
+        elseif ($UninstallString -match 'msiexec') {
+            $GuidMatch = [regex]::Match($UninstallString, $GUID_PATTERN)
+
+            if ($GuidMatch.Success) {
+                $ProductCode = $GuidMatch.Value
+            }
+        }
+
+        if ($ProductCode) {
+            return & $NewPlan 'MSI' 'msiexec.exe' "/x $ProductCode /qn /norestart" $true
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($QuietString)) {
+            $Parts = Split-UninstallCommandLine -CommandLine $QuietString
+            return & $NewPlan 'QuietUninstallString' $Parts.Executable $Parts.Arguments $true
+        }
+
+        if ([string]::IsNullOrWhiteSpace($UninstallString)) {
+            throw "No uninstall command registered for '$($Software.Name)'."
+        }
+
+        $Parts = Split-UninstallCommandLine -CommandLine $UninstallString
+        $Executable = $Parts.Executable
+        $Arguments = $Parts.Arguments
+
+        # Path.GetFileName não separa "\" fora do Windows; divide manualmente
+        $FileName = ($Executable -split '[\\/]')[-1]
+
+        if ($KeyName -match '_is1$' -or $FileName -match '^unins\d{3}\.exe$') {
+            if ($Arguments -notmatch '/VERYSILENT') {
+                $Arguments += " /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+            }
+
+            return & $NewPlan 'Inno Setup' $Executable $Arguments $true
+        }
+
+        if ($FileName -match '^update\.exe$' -and $Arguments -match '--uninstall') {
+            if ($Arguments -notmatch '(^|\s)-s(\s|$)') {
+                $Arguments += " -s"
+            }
+
+            return & $NewPlan 'Squirrel' $Executable $Arguments $true
+        }
+
+        if ($Arguments -match '--uninstall') {
+            if ($Arguments -notmatch '--force-uninstall') {
+                $Arguments += " --force-uninstall"
+            }
+
+            return & $NewPlan 'Chromium' $Executable $Arguments $true
+        }
+
+        if ($Executable -match 'InstallShield Installation Information' -or $Arguments -match '-runfromtemp|-removeonly') {
+            return & $NewPlan 'InstallShield' $Executable $Arguments $false
+        }
+
+        if ($FileName -match '^(uninst|uninstall)[^\\/]*\.exe$') {
+            if ($Arguments -notmatch '(^|\s)/S(\s|$)') {
+                $Arguments += " /S"
+            }
+
+            return & $NewPlan 'NSIS' $Executable $Arguments $true
+        }
+
+        & $NewPlan 'Generic' $Executable $Arguments $false
+    }
+}
+
+# ============================================================
+# TEST REMOTE SOFTWARE INSTALLED
+# ============================================================
+
+<#
+.SYNOPSIS
+    Checks whether a program's uninstall registry key still exists.
+
+.OUTPUTS
+    System.Boolean
+    $true if present, $false if removed, $null if the check failed.
+#>
+function Test-RemoteSoftwareInstalled {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -692,7 +873,94 @@ function Uninstall-RemoteSoftware {
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
+        [string]$RegistryPath
+    )
+
+    $EscapedPath = $RegistryPath -replace "'", "''"
+    $Script = "if (Test-Path -LiteralPath '$EscapedPath') { 'PRESENT' } else { 'ABSENT' }"
+
+    $EncodedScript = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($Script)
+    )
+
+    $Result = Invoke-PsExecCommand `
+        -ComputerName $ComputerName `
+        -Executable "powershell.exe" `
+        -Arguments "-NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand $EncodedScript"
+
+    if ($Result.Output -match 'ABSENT') {
+        return $false
+    }
+
+    if ($Result.Output -match 'PRESENT') {
+        return $true
+    }
+
+    return $null
+}
+
+# ============================================================
+# UNINSTALL SOFTWARE
+# ============================================================
+
+<#
+.SYNOPSIS
+    Uninstalls software from a remote computer.
+
+.DESCRIPTION
+    Resolves a silent uninstall command (see Resolve-UninstallCommand),
+    executes it through PsExec and, when a registry entry is given,
+    waits until the program disappears from the registry.
+
+    Some uninstallers (NSIS, Squirrel) return immediately and keep
+    working in the background, so the registry check is what decides
+    success when -Software is used.
+
+.PARAMETER ComputerName
+    Name of the remote computer.
+
+.PARAMETER Software
+    Entry returned by Get-InstalledSoftware. Enables post-uninstall
+    verification.
+
+.PARAMETER UninstallCommand
+    Raw uninstall command line. No verification is performed.
+
+.PARAMETER Arguments
+    Replaces the resolved arguments (for uninstallers whose silent
+    switch is not detected automatically).
+
+.PARAMETER TimeoutSeconds
+    Maximum execution time in seconds (default: Software.DefaultUninstallTimeout).
+
+.OUTPUTS
+    System.Object
+    Returns uninstallation result with status and details.
+
+.EXAMPLE
+    $App = Get-InstalledSoftware -ComputerName "PC-001" | Where-Object Name -like "*7-Zip*"
+    Uninstall-RemoteSoftware -ComputerName "PC-001" -Software $App
+
+.EXAMPLE
+    Uninstall-RemoteSoftware -ComputerName "PC-001" -UninstallCommand "MsiExec.exe /X{GUID}"
+#>
+function Uninstall-RemoteSoftware {
+    [CmdletBinding(DefaultParameterSetName = 'Software')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Software')]
+        [ValidateNotNull()]
+        [object]$Software,
+
+        [Parameter(Mandatory, ParameterSetName = 'Command')]
+        [ValidateNotNullOrEmpty()]
         [string]$UninstallCommand,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Arguments = "",
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
@@ -700,83 +968,186 @@ function Uninstall-RemoteSoftware {
     )
 
     process {
+        if ($PSCmdlet.ParameterSetName -eq 'Command') {
+            $Software = [PSCustomObject]@{
+                Name            = $UninstallCommand
+                UninstallString = $UninstallCommand
+            }
+        }
+
+        $SoftwareName = [string]$Software.Name
+        $Plan = $null
+
+        $NewResult = {
+            param($Success, $Verified, $ExitCode, $ErrorMessage, $Output, $Duration, $RebootRequired)
+
+            [PSCustomObject]@{
+                Success         = $Success
+                Verified        = $Verified
+                RebootRequired  = [bool]$RebootRequired
+                ComputerName    = $ComputerName
+                SoftwareName    = $SoftwareName
+                UninstallerType = $Plan.InstallerType
+                UninstallCmd    = $Plan.CommandLine
+                ExitCode        = $ExitCode
+                Error           = $ErrorMessage
+                Output          = $Output
+                Duration        = $Duration
+                Timestamp       = Get-Date
+            }
+        }
+
         try {
+            $Plan = Resolve-UninstallCommand -Software $Software
+
+            if (-not [string]::IsNullOrWhiteSpace($Arguments)) {
+                $Plan.Arguments = $Arguments.Trim()
+                $Display = if ($Plan.Executable -match '\s') { "`"$($Plan.Executable)`"" } else { $Plan.Executable }
+                $Plan.CommandLine = "$Display $($Plan.Arguments)"
+            }
+
             Write-Log `
                 -Level Info `
-                -Message "Uninstalling software on $ComputerName"
+                -Message "Uninstalling '$SoftwareName' on $ComputerName [$($Plan.InstallerType)]: $($Plan.CommandLine)"
 
-            # MSI: muitos registros usam "MsiExec.exe /I{GUID}", que abre a tela
-            # de "modificar" e trava até o timeout. Extrai o GUID do produto e
-            # chama o msiexec diretamente com /x silencioso.
-            $ProductCodeMatch = [regex]::Match(
-                $UninstallCommand,
-                '\{[0-9A-Fa-f\-]{36}\}'
-            )
+            if (-not $Plan.Silent -and [string]::IsNullOrWhiteSpace($Arguments)) {
+                Write-Log `
+                    -Level Warning `
+                    -Message "No silent switch known for '$SoftwareName'; the uninstaller may wait for input until the timeout"
+            }
 
-            if ($UninstallCommand -match 'msiexec' -and $ProductCodeMatch.Success) {
-                $Executable = "msiexec.exe"
-                $Arguments = "/x $($ProductCodeMatch.Value) /quiet /norestart"
-                $FinalCommand = "$Executable $Arguments"
+            # Variáveis de ambiente (%ProgramFiles%...) só são expandidas pelo cmd.
+            # As aspas externas extras são removidas pelo próprio cmd /c.
+            if ($Plan.Executable -match '%') {
+                $Executable = "cmd.exe"
+                $FinalArguments = "/c `"`"$($Plan.Executable)`" $($Plan.Arguments)`""
             }
             else {
-                $Executable = "cmd.exe"
-                $Arguments = "/c $UninstallCommand"
-                $FinalCommand = $UninstallCommand
+                $Executable = $Plan.Executable
+                $FinalArguments = $Plan.Arguments
             }
 
-            # Executa o comando de desinstalação
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
                 -Executable $Executable `
-                -Arguments $Arguments `
+                -Arguments $FinalArguments `
                 -TimeoutSeconds $TimeoutSeconds
 
-            # 1605 = produto não está instalado (já removido)
-            if (-not $Result.TimedOut -and $Result.ExitCode -in ($SUCCESS_EXIT_CODES + 1605)) {
-                Write-Log `
-                    -Level Info `
-                    -Message "Software uninstalled successfully on $ComputerName"
+            $Duration = $Result.DurationMS
+            $RebootRequired = ($Result.ExitCode -in $REBOOT_EXIT_CODES)
 
-                return [PSCustomObject]@{
-                    Success        = $true
-                    RebootRequired = ($Result.ExitCode -in $REBOOT_EXIT_CODES)
-                    ComputerName   = $ComputerName
-                    UninstallCmd   = $FinalCommand
-                    ExitCode       = $Result.ExitCode
-                    Output         = $Result.Output
-                    Duration       = $Result.DurationMS
-                    Timestamp      = Get-Date
-                }
+            # 1605 = produto MSI não está instalado (já removido)
+            $AcceptedCodes = $SUCCESS_EXIT_CODES
+            if ($Plan.InstallerType -eq 'MSI') {
+                $AcceptedCodes += 1605
             }
-            else {
+
+            $ExitOk = (-not $Result.TimedOut -and $Result.ExitCode -in $AcceptedCodes)
+
+            if ($Result.TimedOut) {
+                # O PsExec local foi encerrado, mas o desinstalador continua
+                # rodando na máquina remota (provavelmente aguardando uma janela).
+                if ($Plan.InstallerType -ne 'MSI') {
+                    $ProcessName = ($Plan.Executable -split '[\\/]')[-1]
+
+                    $null = Invoke-PsExecCommand `
+                        -ComputerName $ComputerName `
+                        -Executable "taskkill.exe" `
+                        -Arguments "/f /t /im `"$ProcessName`"" `
+                        -TimeoutSeconds 30
+                }
+
+                $Hint = if ($Plan.Silent) { "" } else { " The uninstaller probably opened a window; provide silent arguments and try again." }
+
                 Write-Log `
                     -Level Error `
-                    -Message "Uninstallation failed on $ComputerName with exit code: $($Result.ExitCode)"
+                    -Message "Uninstall of '$SoftwareName' timed out on $ComputerName after $TimeoutSeconds s"
 
-                return [PSCustomObject]@{
-                    Success        = $false
-                    ComputerName   = $ComputerName
-                    UninstallCmd   = $FinalCommand
-                    ExitCode       = $Result.ExitCode
-                    Error          = $Result.Error
-                    Output         = $Result.Output
-                    Duration       = $Result.DurationMS
-                    Timestamp      = Get-Date
-                }
+                return & $NewResult $false $null $null "Uninstaller timed out after $TimeoutSeconds seconds.$Hint" $Result.Output $Duration $false
             }
+
+            # Sem entrada de registro não há como verificar: confia no exit code
+            if ([string]::IsNullOrWhiteSpace([string]$Software.RegistryPath)) {
+                if ($ExitOk) {
+                    Write-Log `
+                        -Level Info `
+                        -Message "Uninstall command completed on $ComputerName (not verified)"
+
+                    return & $NewResult $true $null $Result.ExitCode $null $Result.Output $Duration $RebootRequired
+                }
+
+                Write-Log `
+                    -Level Error `
+                    -Message "Uninstall failed on $ComputerName with exit code: $($Result.ExitCode)"
+
+                return & $NewResult $false $null $Result.ExitCode $Result.Error $Result.Output $Duration $false
+            }
+
+            # Verificação: aguarda a chave do programa sumir do registro
+            Write-Log `
+                -Level Info `
+                -Message "Verifying removal of '$SoftwareName' on $ComputerName"
+
+            $VerifyWatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+            do {
+                $StillInstalled = Test-RemoteSoftwareInstalled `
+                    -ComputerName $ComputerName `
+                    -RegistryPath $Software.RegistryPath
+
+                if ($StillInstalled -ne $true) {
+                    break
+                }
+
+                # Se o desinstalador falhou, não adianta esperar
+                if (-not $ExitOk) {
+                    break
+                }
+
+                Start-Sleep -Seconds $VERIFY_INTERVAL
+            } while ($VerifyWatch.Elapsed.TotalSeconds -lt $VERIFY_TIMEOUT)
+
+            if ($StillInstalled -eq $false) {
+                Write-Log `
+                    -Level Info `
+                    -Message "'$SoftwareName' uninstalled and verified on $ComputerName"
+
+                return & $NewResult $true $true $Result.ExitCode $null $Result.Output $Duration $RebootRequired
+            }
+
+            if ($null -eq $StillInstalled) {
+                $Message = "Could not verify removal (registry check failed)."
+
+                Write-Log `
+                    -Level Warning `
+                    -Message "$Message Exit code: $($Result.ExitCode)"
+
+                return & $NewResult $ExitOk $null $Result.ExitCode $(if (-not $ExitOk) { $Result.Error } else { $Message }) $Result.Output $Duration $RebootRequired
+            }
+
+            $Message = if ($ExitOk) {
+                "Uninstaller reported success, but the program is still registered after $VERIFY_TIMEOUT seconds."
+            }
+            else {
+                "Uninstaller failed with exit code $($Result.ExitCode). $($Result.Error)".Trim()
+            }
+
+            if ([string]$Software.Scope -like 'User*') {
+                $Message += " This is a per-user installation; it may need to be removed while logged in as that user."
+            }
+
+            Write-Log `
+                -Level Error `
+                -Message "Uninstall of '$SoftwareName' failed on $ComputerName`: $Message"
+
+            return & $NewResult $false $false $Result.ExitCode $Message $Result.Output $Duration $false
         }
         catch {
             Write-Log `
                 -Level Error `
                 -Message "Error uninstalling software on $ComputerName`: $($_.Exception.Message)"
 
-            return [PSCustomObject]@{
-                Success        = $false
-                ComputerName   = $ComputerName
-                UninstallCmd   = $UninstallCommand
-                Error          = $_.Exception.Message
-                Timestamp      = Get-Date
-            }
+            return & $NewResult $false $null $null $_.Exception.Message $null $null $false
         }
     }
 }
@@ -792,5 +1163,6 @@ Export-ModuleMember -Function @(
     'Install-RemoteSoftware'
     'Get-InstalledSoftware'
     'Get-SoftwareUninstallCommand'
+    'Resolve-UninstallCommand'
     'Uninstall-RemoteSoftware'
 )

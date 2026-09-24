@@ -591,7 +591,7 @@ $($InstallResult.Error)
                     $Software = Read-ItemSelection `
                         -Items $FoundSoftware `
                         -Title "Multiple programs found. Select which one to uninstall:" `
-                        -DisplayProperty { "$($_.Name) (v$($_.Version))" }
+                        -DisplayProperty { "$($_.Name) (v$($_.Version))  [$($_.Scope)]" }
 
                     if (-not $Software) {
                         Write-Log `
@@ -600,26 +600,38 @@ $($InstallResult.Error)
                         continue
                     }
 
-                    # Prefere o comando silencioso quando o fabricante fornece um
-                    $UninstallCommand = if ($Software.QuietUninstallString) {
-                        $Software.QuietUninstallString
+                    # Step 2: Resolve silent uninstall command
+                    try {
+                        $Plan = Resolve-UninstallCommand -Software $Software
                     }
-                    else {
-                        $Software.UninstallString
-                    }
-
-                    if ([string]::IsNullOrWhiteSpace($UninstallCommand)) {
+                    catch {
                         Show-ExecutionResult `
                             -Status Error `
                             -Message "No uninstall command registered" `
-                            -Details "'$($Software.Name)' does not provide an uninstall command in the registry."
+                            -Details $_.Exception.Message
                         continue
                     }
 
                     Write-Host "[✓] Software found: $($Software.Name)" -ForegroundColor Green
-                    Write-Host "   Version: $($Software.Version)" -ForegroundColor Gray
+                    Write-Host "   Version   : $($Software.Version)" -ForegroundColor Gray
+                    Write-Host "   Publisher : $($Software.Publisher)" -ForegroundColor Gray
+                    Write-Host "   Scope     : $($Software.Scope)" -ForegroundColor Gray
+                    Write-Host "   Installer : $($Plan.InstallerType)" -ForegroundColor Gray
+                    Write-Host "   Command   : $($Plan.CommandLine)" -ForegroundColor Gray
 
-                    # Step 2: Confirm uninstall
+                    $CustomArguments = ""
+
+                    if (-not $Plan.Silent) {
+                        Write-Host "`n[!] No silent switch is known for this uninstaller." -ForegroundColor Yellow
+                        Write-Host "    Without one it may wait for a window nobody can see until the timeout." -ForegroundColor Yellow
+                        Write-Host "[>] Silent arguments (optional, replaces current arguments): " `
+                            -ForegroundColor Yellow `
+                            -NoNewline
+
+                        $CustomArguments = Read-Host
+                    }
+
+                    # Step 3: Confirm uninstall
                     Write-Host "`n[!] Are you sure you want to uninstall this software? (yes/no): " `
                         -ForegroundColor Yellow `
                         -NoNewline
@@ -637,11 +649,12 @@ $($InstallResult.Error)
                         continue
                     }
 
-                    # Step 3: Execute uninstall
+                    # Step 4: Execute uninstall and verify removal
                     Write-Host "`n[*] Uninstalling software on $Computer..." -ForegroundColor Cyan
                     $UninstallResult = Uninstall-RemoteSoftware `
                         -ComputerName $Computer `
-                        -UninstallCommand $UninstallCommand
+                        -Software $Software `
+                        -Arguments $CustomArguments
 
                     if ($UninstallResult.Success) {
                         Write-Log `
@@ -655,7 +668,10 @@ $($InstallResult.Error)
 Computer   : $($UninstallResult.ComputerName)
 Software   : $($Software.Name)
 Version    : $($Software.Version)
+Installer  : $($UninstallResult.UninstallerType)
+Command    : $($UninstallResult.UninstallCmd)
 Exit Code  : $($UninstallResult.ExitCode)
+Verified   : $(if ($UninstallResult.Verified) { "Yes (removed from registry)" } else { "No" })
 Reboot     : $(if ($UninstallResult.RebootRequired) { "Required" } else { "Not required" })
 Duration   : $($UninstallResult.Duration) ms
 
@@ -674,6 +690,8 @@ $($UninstallResult.Output)
                             -Details @"
 Computer  : $($UninstallResult.ComputerName)
 Software  : $($Software.Name)
+Installer : $($UninstallResult.UninstallerType)
+Command   : $($UninstallResult.UninstallCmd)
 Exit Code : $($UninstallResult.ExitCode)
 
 Error:
