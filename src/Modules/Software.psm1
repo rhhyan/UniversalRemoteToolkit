@@ -5,12 +5,17 @@
 # ============================================================
 
 # ============================================================
-# CONSTANTS
+# CONFIGURATION
 # ============================================================
 
-$REPOSITORY_PATH = "\\fsrctrppw01\aplicativos"
-$TEMP_SCRIPT_PATH = "C:\script_temp"
-$SUPPORTED_INSTALLERS = @(".exe", ".msi", ".ps1")
+$Config = Get-ToolkitConfig
+
+$REPOSITORY_PATH = $Config.Software.RepositoryPath
+$TEMP_SCRIPT_PATH = $Config.Software.RemoteTempPath
+$SUPPORTED_INSTALLERS = $Config.Software.SupportedInstallers
+
+$DEFAULT_INSTALL_TIMEOUT = $Config.Software.DefaultInstallTimeout
+$DEFAULT_UNINSTALL_TIMEOUT = $Config.Software.DefaultUninstallTimeout
 
 # ============================================================
 # GET SOFTWARE REPOSITORY
@@ -213,7 +218,10 @@ function Copy-SoftwareToRemote {
                 -Message "Copying installer to $ComputerName"
 
             $InstallerName = Split-Path -Leaf $InstallerPath
-            $RemotePath = "\\$ComputerName\C$\script_temp"
+
+            $DriveLetter = $TEMP_SCRIPT_PATH.Substring(0, 1)
+            $PathWithoutDrive = $TEMP_SCRIPT_PATH.Substring(3)
+            $RemotePath = "\\$ComputerName\$DriveLetter`$\$PathWithoutDrive"
 
             # Cria diretório se não existir
             if (-not (Test-Path -Path $RemotePath)) {
@@ -237,7 +245,7 @@ function Copy-SoftwareToRemote {
                 LocalPath     = $InstallerPath
                 RemotePath    = $RemoteFilePath
                 FileName      = $InstallerName
-                LocalPathOnly = "C:\script_temp\$InstallerName"
+                LocalPathOnly = Join-Path $TEMP_SCRIPT_PATH $InstallerName
             }
         }
         catch {
@@ -307,7 +315,7 @@ function Install-RemoteSoftware {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = 300
+        [int]$TimeoutSeconds = $DEFAULT_INSTALL_TIMEOUT
     )
 
     process {
@@ -683,7 +691,7 @@ function Uninstall-RemoteSoftware {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = 300
+        [int]$TimeoutSeconds = $DEFAULT_UNINSTALL_TIMEOUT
     )
 
     process {
