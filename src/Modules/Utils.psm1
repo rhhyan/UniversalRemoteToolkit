@@ -96,7 +96,8 @@ function Get-ApplicationRoot {
     [CmdletBinding()]
     param()
 
-    return Split-Path -Parent $PSScriptRoot
+    # Modules -> src -> raiz
+    return Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 }
 
 

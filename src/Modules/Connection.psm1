@@ -3,7 +3,8 @@
     Locates the PsExec executable used by the Universal Remote Toolkit.
 
 .DESCRIPTION
-    Resolves the path to PsExec.exe located in the toolkit's Bin directory.
+    Resolves the path to PsExec.exe using Paths.PsExec from Settings.json.
+    Falls back to the toolkit's Bin directory when the setting is missing.
     The function does not execute PsExec; it only locates the executable.
 
 .OUTPUTS
@@ -24,10 +25,22 @@ function Get-PsExecPath {
 
     process {
         try {
-            $ToolkitRoot = Split-Path -Parent $PSScriptRoot
-            $ToolkitRoot = Split-Path -Parent $ToolkitRoot
+            $PsExecPath = $null
 
-            $PsExecPath = Join-Path $ToolkitRoot "Bin/PsExec.exe"
+            try {
+                $Config = Get-ToolkitConfig
+
+                if ($Config.Paths.PsExec) {
+                    $PsExecPath = Resolve-ToolkitPath -Path $Config.Paths.PsExec
+                }
+            }
+            catch {
+                Write-Verbose "Could not read Paths.PsExec from configuration. Using default."
+            }
+
+            if (-not $PsExecPath) {
+                $PsExecPath = Join-Path (Get-ToolkitRoot) "Bin/PsExec.exe"
+            }
 
             if (Test-Path -Path $PsExecPath -PathType Leaf) {
                 return $PsExecPath
@@ -80,8 +93,8 @@ function Test-PsExecInstalled {
     Tests whether a remote computer is reachable.
 
 .DESCRIPTION
-    Sends a single ICMP request to the specified computer using
-    Test-Connection.
+    Sends a single ICMP request to the specified computer, waiting at
+    most Network.PingTimeout milliseconds (Settings.json, default 1000).
 
     This function only verifies network reachability. A successful
     response does not guarantee that PsExec, SMB, RPC, or other
@@ -110,25 +123,46 @@ function Test-ComputerReachable {
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string]$ComputerName
+        [string]$ComputerName,
+
+        [Parameter()]
+        [ValidateRange(100, 60000)]
+        [int]$TimeoutMilliseconds = 0
     )
 
     process {
-        try {
-            if (
-                Test-Connection `
-                    -ComputerName $ComputerName `
-                    -Count 1 `
-                    -Quiet `
-                    -ErrorAction Stop
-            ) {
-                return $true
-            }
+        # Aceita "\\PC-001" e "PC-001"
+        $HostName = $ComputerName.TrimStart('\')
 
-            return $false
+        if ($TimeoutMilliseconds -eq 0) {
+            $TimeoutMilliseconds = 1000
+
+            try {
+                $Config = Get-ToolkitConfig
+
+                if ($Config.Network.PingTimeout) {
+                    $TimeoutMilliseconds = [int]$Config.Network.PingTimeout
+                }
+            }
+            catch {
+                Write-Verbose "Could not read Network.PingTimeout. Using $TimeoutMilliseconds ms."
+            }
+        }
+
+        # System.Net.NetworkInformation.Ping permite timeout tanto no
+        # Windows PowerShell 5.1 quanto no PowerShell 7.
+        $Ping = [System.Net.NetworkInformation.Ping]::new()
+
+        try {
+            $Reply = $Ping.Send($HostName, $TimeoutMilliseconds)
+
+            return ($Reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success)
         }
         catch {
             return $false
+        }
+        finally {
+            $Ping.Dispose()
         }
     }
 }

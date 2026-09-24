@@ -13,6 +13,7 @@ UniversalRemoteToolkit
 │   │   ├── ConsoleUI.psm1
 │   │   ├── Execution.psm1
 │   │   ├── Logger.psm1
+│   │   ├── Software.psm1
 │   │   └── Utils.psm1
 │   │
 │   └── UniversalRemoteToolkit.ps1

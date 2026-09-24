@@ -85,7 +85,10 @@ function Build-PsExecArguments {
             }
 
             # Build PsExec switches.
-            $PsExecOptions = @($RemoteComputer)
+            # -accepteula evita que o PsExec fique aguardando o aceite da
+            # EULA (processo sem janela = travaria até o timeout).
+            # -nobanner remove o cabeçalho de copyright do stderr.
+            $PsExecOptions = @($RemoteComputer, "-accepteula", "-nobanner")
 
             if ($System) {
                 $PsExecOptions += "-s"
@@ -95,8 +98,13 @@ function Build-PsExecArguments {
                 $PsExecOptions += "-i"
             }
 
-            # Add executable.
-            $PsExecOptions += $Executable
+            # Add executable (quoted when the path contains spaces).
+            if ($Executable -match '\s' -and -not $Executable.StartsWith('"')) {
+                $PsExecOptions += "`"$Executable`""
+            }
+            else {
+                $PsExecOptions += $Executable
+            }
 
             # Add executable arguments when provided.
             if (-not [string]::IsNullOrWhiteSpace($Arguments)) {

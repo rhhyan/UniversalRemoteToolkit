@@ -17,6 +17,13 @@ $SUPPORTED_INSTALLERS = $Config.Software.SupportedInstallers
 $DEFAULT_INSTALL_TIMEOUT = $Config.Software.DefaultInstallTimeout
 $DEFAULT_UNINSTALL_TIMEOUT = $Config.Software.DefaultUninstallTimeout
 
+# Códigos de saída do Windows Installer que indicam sucesso
+#   0    = sucesso
+#   3010 = sucesso, reinicialização necessária
+#   1641 = sucesso, reinicialização iniciada
+$SUCCESS_EXIT_CODES = @(0, 3010, 1641)
+$REBOOT_EXIT_CODES = @(3010, 1641)
+
 # ============================================================
 # GET SOFTWARE REPOSITORY
 # ============================================================
@@ -327,32 +334,27 @@ function Install-RemoteSoftware {
             # Determina o tipo de instalador e argumentos padrão
             $Extension = [System.IO.Path]::GetExtension($InstallerPath).ToLower()
 
-            $InstallCommand = switch ($Extension) {
+            # Chama o executável diretamente (sem "cmd /c") e com o caminho
+            # entre aspas, para suportar nomes de arquivo com espaços.
+            switch ($Extension) {
                 ".msi" {
+                    $Executable = "msiexec.exe"
+
                     if ([string]::IsNullOrWhiteSpace($Arguments)) {
-                        "$InstallerPath /quiet /norestart"
+                        $Arguments = "/quiet /norestart"
                     }
-                    else {
-                        "$InstallerPath $Arguments"
-                    }
+
+                    $FinalArguments = "/i `"$InstallerPath`" $Arguments"
                 }
 
                 ".ps1" {
-                    if ([string]::IsNullOrWhiteSpace($Arguments)) {
-                        "powershell.exe -ExecutionPolicy Bypass -File `"$InstallerPath`""
-                    }
-                    else {
-                        "powershell.exe -ExecutionPolicy Bypass -File `"$InstallerPath`" $Arguments"
-                    }
+                    $Executable = "powershell.exe"
+                    $FinalArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$InstallerPath`" $Arguments"
                 }
 
                 ".exe" {
-                    if ([string]::IsNullOrWhiteSpace($Arguments)) {
-                        $InstallerPath
-                    }
-                    else {
-                        "$InstallerPath $Arguments"
-                    }
+                    $Executable = $InstallerPath
+                    $FinalArguments = $Arguments
                 }
 
                 default {
@@ -363,20 +365,21 @@ function Install-RemoteSoftware {
             # Executa via PsExec
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
-                -Executable "cmd.exe" `
-                -Arguments "/c $InstallCommand" `
+                -Executable $Executable `
+                -Arguments $FinalArguments.Trim() `
                 -TimeoutSeconds $TimeoutSeconds
 
-            if ($Result.Success -or $Result.ExitCode -eq 0) {
+            if (-not $Result.TimedOut -and $Result.ExitCode -in $SUCCESS_EXIT_CODES) {
                 Write-Log `
                     -Level Info `
                     -Message "Software installed successfully on $ComputerName"
 
                 return [PSCustomObject]@{
-                    Success       = $true
-                    ComputerName  = $ComputerName
-                    InstallerPath = $InstallerPath
-                    ExitCode      = $Result.ExitCode
+                    Success        = $true
+                    RebootRequired = ($Result.ExitCode -in $REBOOT_EXIT_CODES)
+                    ComputerName   = $ComputerName
+                    InstallerPath  = $InstallerPath
+                    ExitCode       = $Result.ExitCode
                     Output        = $Result.Output
                     Duration      = $Result.DurationMS
                     Timestamp     = Get-Date
@@ -470,12 +473,14 @@ try {
                 `$DisplayName = `$_.GetValue('DisplayName')
                 `$DisplayVersion = `$_.GetValue('DisplayVersion')
                 `$UninstallString = `$_.GetValue('UninstallString')
+                `$QuietUninstallString = `$_.GetValue('QuietUninstallString')
 
                 if (`$DisplayName) {
                     `$InstalledApps += [PSCustomObject]@{
                         Name             = `$DisplayName
                         Version          = `$DisplayVersion
                         UninstallString  = `$UninstallString
+                        QuietUninstallString = `$QuietUninstallString
                         RegistryPath     = `$_.PSPath
                     }
                 }
@@ -700,27 +705,41 @@ function Uninstall-RemoteSoftware {
                 -Level Info `
                 -Message "Uninstalling software on $ComputerName"
 
-            # Se o comando for MsiExec, garantir que use /quiet e /norestart
-            $FinalCommand = $UninstallCommand
+            # MSI: muitos registros usam "MsiExec.exe /I{GUID}", que abre a tela
+            # de "modificar" e trava até o timeout. Extrai o GUID do produto e
+            # chama o msiexec diretamente com /x silencioso.
+            $ProductCodeMatch = [regex]::Match(
+                $UninstallCommand,
+                '\{[0-9A-Fa-f\-]{36}\}'
+            )
 
-            if ($UninstallCommand -like "*MsiExec*" -and $UninstallCommand -notlike "*quiet*") {
-                $FinalCommand = $UninstallCommand -replace "(/X.*?)(\s|$)", "`$1 /quiet /norestart `$2"
+            if ($UninstallCommand -match 'msiexec' -and $ProductCodeMatch.Success) {
+                $Executable = "msiexec.exe"
+                $Arguments = "/x $($ProductCodeMatch.Value) /quiet /norestart"
+                $FinalCommand = "$Executable $Arguments"
+            }
+            else {
+                $Executable = "cmd.exe"
+                $Arguments = "/c $UninstallCommand"
+                $FinalCommand = $UninstallCommand
             }
 
             # Executa o comando de desinstalação
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
-                -Executable "cmd.exe" `
-                -Arguments "/c $FinalCommand" `
+                -Executable $Executable `
+                -Arguments $Arguments `
                 -TimeoutSeconds $TimeoutSeconds
 
-            if ($Result.Success -or $Result.ExitCode -eq 0 -or $Result.ExitCode -eq 1605) {
+            # 1605 = produto não está instalado (já removido)
+            if (-not $Result.TimedOut -and $Result.ExitCode -in ($SUCCESS_EXIT_CODES + 1605)) {
                 Write-Log `
                     -Level Info `
                     -Message "Software uninstalled successfully on $ComputerName"
 
                 return [PSCustomObject]@{
                     Success        = $true
+                    RebootRequired = ($Result.ExitCode -in $REBOOT_EXIT_CODES)
                     ComputerName   = $ComputerName
                     UninstallCmd   = $FinalCommand
                     ExitCode       = $Result.ExitCode

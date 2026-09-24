@@ -46,12 +46,33 @@ function Start-Log {
 
     try {
 
-        # Caminho da pasta Logs
+        # Valores padrão (usados se a configuração não puder ser lida)
         $LogsPath = Join-Path (
             Split-Path -Parent (
                 Split-Path -Parent $PSScriptRoot
             )
         ) "Logs"
+        $RetentionDays = 30
+        $EnableConsole = $true
+
+        try {
+            $Config = Get-ToolkitConfig
+
+            if ($Config.Paths.Logs) {
+                $LogsPath = Resolve-ToolkitPath -Path $Config.Paths.Logs
+            }
+
+            if ($Config.Logs.RetentionDays) {
+                $RetentionDays = $Config.Logs.RetentionDays
+            }
+
+            if ($null -ne $Config.Logs.EnableConsole) {
+                $EnableConsole = [bool]$Config.Logs.EnableConsole
+            }
+        }
+        catch {
+            Write-Verbose "Não foi possível ler a configuração de logs. Usando valores padrão."
+        }
 
         # Cria a pasta caso não exista
         if (-not (Test-Path $LogsPath)) {
@@ -59,18 +80,6 @@ function Start-Log {
         }
 
         # Remove logs além do período de retenção configurado
-        $RetentionDays = 30
-
-        try {
-            $Config = Get-ToolkitConfig
-
-            if ($Config.Logs.RetentionDays) {
-                $RetentionDays = $Config.Logs.RetentionDays
-            }
-        }
-        catch {
-            Write-Verbose "Não foi possível ler RetentionDays da configuração. Usando padrão: $RetentionDays dias."
-        }
 
         $RemovedCount = Remove-OldLogFiles `
             -LogsPath $LogsPath `
@@ -88,8 +97,9 @@ function Start-Log {
 
         # Guarda informações da sessão
         $script:LogSession = @{
-            StartedAt = Get-Date
-            LogFile   = $LogFilePath
+            StartedAt     = Get-Date
+            LogFile       = $LogFilePath
+            EnableConsole = $EnableConsole
         }
 
         if ($RemovedCount -gt 0) {
@@ -153,7 +163,11 @@ function Write-Log {
             -Value $FormattedMessage `
             -Encoding UTF8
 
-        # Exibe no console
+        # Exibe no console (Logs.EnableConsole no Settings.json)
+        if (-not $script:LogSession.EnableConsole) {
+            return
+        }
+
         switch ($Level) {
 
             'Debug' {
@@ -198,13 +212,13 @@ function Stop-Log {
         $Duration = (Get-Date) - $script:LogSession.StartedAt
 
         $FormattedDuration = "{0:00}:{1:00}:{2:00}" -f `
-            $Duration.Hours,
+            [math]::Floor($Duration.TotalHours),
             $Duration.Minutes,
             $Duration.Seconds
 
         Write-Log `
             -Level Info `
-            -Message "Sessão encerrada. Tempo total: $Duration"
+            -Message "Sessão encerrada. Tempo total: $FormattedDuration"
 
         $script:LogSession = $null
     }

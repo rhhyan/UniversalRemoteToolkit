@@ -91,7 +91,7 @@ function Show-MainMenu {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [hashtable]$MenuItems,
+        [System.Collections.IDictionary]$MenuItems,
         
         [Parameter(Mandatory = $false)]
         [string]$Description = "Selecione uma opção:"
@@ -100,7 +100,15 @@ function Show-MainMenu {
     Write-Host $Description -ForegroundColor Magenta
     Write-Host ""
     
-    $MenuItems.GetEnumerator() | Sort-Object -Property Name | ForEach-Object {
+    # Menus [ordered] mantêm a ordem definida (ex: "0 - Sair" por último);
+    # hashtables comuns não têm ordem garantida, então são ordenadas.
+    $Entries = $MenuItems.GetEnumerator()
+
+    if ($MenuItems -isnot [System.Collections.Specialized.OrderedDictionary]) {
+        $Entries = $Entries | Sort-Object -Property Name
+    }
+
+    $Entries | ForEach-Object {
         Write-Host "  [$($_.Name)] - $($_.Value)" -ForegroundColor Green
     }
     
@@ -153,6 +161,69 @@ function Read-MenuSelection {
         }
         
     } while ($true)
+}
+
+function Read-ItemSelection {
+    <#
+    .SYNOPSIS
+        Permite ao usuário escolher um item de uma lista numerada
+
+    .PARAMETER Items
+        Itens disponíveis para seleção
+
+    .PARAMETER DisplayProperty
+        Scriptblock que gera o texto exibido para cada item
+
+    .PARAMETER Title
+        Texto exibido acima da lista
+
+    .DESCRIPTION
+        Com um único item, retorna-o diretamente sem perguntar.
+        Retorna $null se a lista estiver vazia ou se o usuário escolher 0 (cancelar).
+
+    .EXAMPLE
+        $App = Read-ItemSelection -Items $Apps -DisplayProperty { "$($_.Name) ($($_.Version))" }
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$Items,
+
+        [Parameter(Mandatory = $false)]
+        [scriptblock]$DisplayProperty = { "$_" },
+
+        [Parameter(Mandatory = $false)]
+        [string]$Title = "Mais de um resultado encontrado:"
+    )
+
+    if ($Items.Count -eq 0) {
+        return $null
+    }
+
+    if ($Items.Count -eq 1) {
+        return $Items[0]
+    }
+
+    Write-Host ""
+    Write-Host $Title -ForegroundColor Magenta
+    Write-Host ""
+
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        $Label = $Items[$i] | ForEach-Object $DisplayProperty
+        Write-Host "  [$($i + 1)] - $Label" -ForegroundColor Green
+    }
+
+    Write-Host "  [0] - Cancelar" -ForegroundColor Green
+    Write-Host ""
+
+    $Choice = Read-MenuSelection -ValidOptions (0..$Items.Count)
+
+    if ($Choice -eq 0) {
+        return $null
+    }
+
+    return $Items[$Choice - 1]
 }
 
 function Show-ExecutionResult {
@@ -218,12 +289,16 @@ function Show-ExecutionResult {
     Write-Host "`n$($IconMap[$Status]) $Message" -ForegroundColor $ColorMap[$Status]
     
     if ($Details) {
-        Write-Host "   $Details" -ForegroundColor Gray
+        # Indenta todas as linhas, não apenas a primeira
+        $Details -split "\r?\n" | ForEach-Object {
+            Write-Host "   $_" -ForegroundColor Gray
+        }
     }
-    
+
     if ($Pause) {
         Write-Host ""
-        Read-Host "Pressione Enter para continuar"
+        # Out-Null evita que o texto digitado vaze para o pipeline
+        Read-Host "Pressione Enter para continuar" | Out-Null
     }
     
     Write-Host ""

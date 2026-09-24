@@ -253,14 +253,14 @@ function Invoke-ExecutionMenu {
                             -Status Success `
                             -Message "Command executed successfully" `
                             -Details @"
-                            Computer : $($Result.Computer)
-                            Command  : $($Result.Command)
-                            ExitCode : $($Result.ExitCode)
-                            Duration : $($Result.DurationMS) ms
+Computer : $($Result.Computer)
+Command  : $($Result.Command)
+ExitCode : $($Result.ExitCode)
+Duration : $($Result.DurationMS) ms
 
-                            Output:
-                            $($Result.Output)
-                            "@
+Output:
+$($Result.Output)
+"@
                     }
                     else {
 
@@ -413,13 +413,25 @@ function Invoke-SoftwareMenu {
 
                     # Step 1: Search for installer
                     Write-Host "`n[*] Searching for installer..." -ForegroundColor Cyan
-                    $Installer = Find-SoftwareInstaller -SoftwareName $SoftwareName
+                    $Installers = @(Get-SoftwareRepository -Filter $SoftwareName)
 
-                    if (-not $Installer) {
+                    if ($Installers.Count -eq 0) {
                         Show-ExecutionResult `
                             -Status Error `
                             -Message "Installer not found" `
                             -Details "No matching installer found in repository for: $SoftwareName"
+                        continue
+                    }
+
+                    $Installer = Read-ItemSelection `
+                        -Items $Installers `
+                        -Title "Multiple installers found:" `
+                        -DisplayProperty { "$($_.Name)  [$($_.FullPath)]" }
+
+                    if (-not $Installer) {
+                        Write-Log `
+                            -Level Info `
+                            -Message "Software installation cancelled by user"
                         continue
                     }
 
@@ -455,6 +467,20 @@ function Invoke-SoftwareMenu {
                         -InstallerPath $CopyResult.LocalPathOnly `
                         -Arguments $Arguments
 
+                    # Step 5: Remove the copied installer from the remote temp folder
+                    try {
+                        Remove-Item -Path $CopyResult.RemotePath -Force -ErrorAction Stop
+
+                        Write-Log `
+                            -Level Info `
+                            -Message "Removed remote installer: $($CopyResult.RemotePath)"
+                    }
+                    catch {
+                        Write-Log `
+                            -Level Warning `
+                            -Message "Could not remove remote installer $($CopyResult.RemotePath): $($_.Exception.Message)"
+                    }
+
                     if ($InstallResult.Success) {
                         Write-Log `
                             -Level Info `
@@ -468,6 +494,7 @@ Computer       : $($InstallResult.ComputerName)
 Software       : $SoftwareName
 Installer      : $($Installer.Name)
 Exit Code      : $($InstallResult.ExitCode)
+Reboot needed  : $(if ($InstallResult.RebootRequired) { "Yes" } else { "No" })
 Duration       : $($InstallResult.Duration) ms
 
 Output:
@@ -548,15 +575,44 @@ $($InstallResult.Error)
 
                     # Step 1: Get uninstall command
                     Write-Host "`n[*] Searching for software..." -ForegroundColor Cyan
-                    $Software = Get-SoftwareUninstallCommand `
-                        -ComputerName $Computer `
-                        -SoftwareName $SoftwareName
+                    $FoundSoftware = @(
+                        Get-InstalledSoftware -ComputerName $Computer |
+                            Where-Object { $_.Name -like "*$SoftwareName*" }
+                    )
 
-                    if (-not $Software) {
+                    if ($FoundSoftware.Count -eq 0) {
                         Show-ExecutionResult `
                             -Status Warning `
                             -Message "Software not found" `
                             -Details "No software matching '$SoftwareName' found on $Computer"
+                        continue
+                    }
+
+                    $Software = Read-ItemSelection `
+                        -Items $FoundSoftware `
+                        -Title "Multiple programs found. Select which one to uninstall:" `
+                        -DisplayProperty { "$($_.Name) (v$($_.Version))" }
+
+                    if (-not $Software) {
+                        Write-Log `
+                            -Level Info `
+                            -Message "Uninstall cancelled by user"
+                        continue
+                    }
+
+                    # Prefere o comando silencioso quando o fabricante fornece um
+                    $UninstallCommand = if ($Software.QuietUninstallString) {
+                        $Software.QuietUninstallString
+                    }
+                    else {
+                        $Software.UninstallString
+                    }
+
+                    if ([string]::IsNullOrWhiteSpace($UninstallCommand)) {
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "No uninstall command registered" `
+                            -Details "'$($Software.Name)' does not provide an uninstall command in the registry."
                         continue
                     }
 
@@ -585,7 +641,7 @@ $($InstallResult.Error)
                     Write-Host "`n[*] Uninstalling software on $Computer..." -ForegroundColor Cyan
                     $UninstallResult = Uninstall-RemoteSoftware `
                         -ComputerName $Computer `
-                        -UninstallCommand $Software.UninstallString
+                        -UninstallCommand $UninstallCommand
 
                     if ($UninstallResult.Success) {
                         Write-Log `
@@ -600,6 +656,7 @@ Computer   : $($UninstallResult.ComputerName)
 Software   : $($Software.Name)
 Version    : $($Software.Version)
 Exit Code  : $($UninstallResult.ExitCode)
+Reboot     : $(if ($UninstallResult.RebootRequired) { "Required" } else { "Not required" })
 Duration   : $($UninstallResult.Duration) ms
 
 Output:
