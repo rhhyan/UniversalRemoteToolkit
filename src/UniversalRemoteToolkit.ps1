@@ -155,6 +155,44 @@ $SettingsMenu = [ordered]@{
 }
 
 # ============================================================
+# SCREEN HELPERS
+# ============================================================
+
+function Show-Screen {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Subtitle
+    )
+
+    Clear-Host
+
+    Show-Banner `
+        -Title $Config.Application.Name `
+        -Subtitle $Subtitle
+}
+
+function Read-MenuChoice {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.IDictionary]$Menu,
+
+        [Parameter(Mandatory)]
+        [string]$Description
+    )
+
+    Show-MainMenu `
+        -MenuItems $Menu `
+        -Description $Description
+
+    return Read-MenuSelection `
+        -ValidOptions @($Menu.Keys)
+}
+
+# ============================================================
 # EXECUTION MENU
 # ============================================================
 
@@ -165,18 +203,11 @@ function Invoke-ExecutionMenu {
 
     while ($true) {
 
-        Clear-Host
+        Show-Screen -Subtitle "Remote Execution"
 
-        Show-Banner `
-            -Title "Universal Remote Toolkit" `
-            -Subtitle "Remote Execution"
-
-        Show-MainMenu `
-            -MenuItems $ExecutionMenu `
+        $Choice = Read-MenuChoice `
+            -Menu $ExecutionMenu `
             -Description "Select an execution option:"
-
-        $Choice = Read-MenuSelection `
-            -ValidOptions @(0, 1, 2, 3)
 
         Write-Log `
             -Level Info `
@@ -190,12 +221,9 @@ function Invoke-ExecutionMenu {
 
             1 {
 
-                Write-Host ""
-                Write-Host "[>] Computer name: " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
+                Show-Section -Title "Execute command"
 
-                $Computer = Read-Host
+                $Computer = Read-UserInput -Prompt "Computer name"
 
                 if ([string]::IsNullOrWhiteSpace($Computer)) {
 
@@ -206,11 +234,7 @@ function Invoke-ExecutionMenu {
                     continue
                 }
 
-                Write-Host "[>] Executable: " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
-
-                $Executable = Read-Host
+                $Executable = Read-UserInput -Prompt "Executable"
 
                 if ([string]::IsNullOrWhiteSpace($Executable)) {
 
@@ -225,17 +249,16 @@ function Invoke-ExecutionMenu {
                     continue
                 }
 
-                Write-Host "[>] Arguments (optional): " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
-
-                $Arguments = Read-Host
+                $Arguments = Read-UserInput -Prompt "Arguments (optional)"
 
                 try {
 
                     Write-Log `
                         -Level Info `
                         -Message "Starting remote execution on $Computer"
+
+                    Write-Host ""
+                    Write-Status -Status Running -Message "Executing on $Computer..."
 
                     $Result = Invoke-PsExecCommand `
                         -ComputerName $Computer `
@@ -252,15 +275,14 @@ function Invoke-ExecutionMenu {
                         Show-ExecutionResult `
                             -Status Success `
                             -Message "Command executed successfully" `
-                            -Details @"
-Computer : $($Result.Computer)
-Command  : $($Result.Command)
-ExitCode : $($Result.ExitCode)
-Duration : $($Result.DurationMS) ms
-
-Output:
-$($Result.Output)
-"@
+                            -Properties ([ordered]@{
+                                Computer = $Result.Computer
+                                Command  = $Result.Command
+                                ExitCode = $Result.ExitCode
+                                Duration = "$($Result.DurationMS) ms"
+                            }) `
+                            -DetailsTitle "Output:" `
+                            -Details $Result.Output
                     }
                     else {
 
@@ -271,13 +293,12 @@ $($Result.Output)
                         Show-ExecutionResult `
                             -Status Error `
                             -Message "Command execution failed" `
-                            -Details @"
-Computer : $($Result.Computer)
-ExitCode : $($Result.ExitCode)
-
-Error:
-$($Result.Error)
-"@
+                            -Properties ([ordered]@{
+                                Computer = $Result.Computer
+                                ExitCode = $Result.ExitCode
+                            }) `
+                            -DetailsTitle "Error:" `
+                            -Details $Result.Error
                     }
                 }
                 catch {
@@ -350,18 +371,11 @@ function Invoke-SoftwareMenu {
 
     while ($true) {
 
-        Clear-Host
+        Show-Screen -Subtitle "Software Management"
 
-        Show-Banner `
-            -Title "Universal Remote Toolkit" `
-            -Subtitle "Software Management"
-
-        Show-MainMenu `
-            -MenuItems $SoftwareMenu `
+        $Choice = Read-MenuChoice `
+            -Menu $SoftwareMenu `
             -Description "Select a software management option:"
-
-        $Choice = Read-MenuSelection `
-            -ValidOptions @(0, 1, 2, 3)
 
         Write-Log `
             -Level Info `
@@ -374,12 +388,9 @@ function Invoke-SoftwareMenu {
                 # Install software
                 # ------------------------------------------------
 
-                Write-Host ""
-                Write-Host "[>] Computer name: " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
+                Show-Section -Title "Install software"
 
-                $Computer = Read-Host
+                $Computer = Read-UserInput -Prompt "Computer name"
 
                 if ([string]::IsNullOrWhiteSpace($Computer)) {
                     Write-Log `
@@ -388,11 +399,7 @@ function Invoke-SoftwareMenu {
                     continue
                 }
 
-                Write-Host "[>] Software name (to search): " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
-
-                $SoftwareName = Read-Host
+                $SoftwareName = Read-UserInput -Prompt "Software name (to search)"
 
                 if ([string]::IsNullOrWhiteSpace($SoftwareName)) {
                     Write-Log `
@@ -412,7 +419,8 @@ function Invoke-SoftwareMenu {
                         -Message "Starting software installation workflow"
 
                     # Step 1: Search for installer
-                    Write-Host "`n[*] Searching for installer..." -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Status -Status Running -Message "Searching for installer..."
                     $Installers = @(Get-SoftwareRepository -Filter $SoftwareName)
 
                     if ($Installers.Count -eq 0) {
@@ -435,10 +443,10 @@ function Invoke-SoftwareMenu {
                         continue
                     }
 
-                    Write-Host "[✓] Installer found: $($Installer.Name)" -ForegroundColor Green
+                    Write-Status -Status Success -Message "Installer found: $($Installer.Name)"
 
                     # Step 2: Copy to remote
-                    Write-Host "`n[*] Copying installer to remote computer..." -ForegroundColor Cyan
+                    Write-Status -Status Running -Message "Copying installer to $Computer..."
                     $CopyResult = Copy-SoftwareToRemote `
                         -ComputerName $Computer `
                         -InstallerPath $Installer.FullPath
@@ -451,17 +459,15 @@ function Invoke-SoftwareMenu {
                         continue
                     }
 
-                    Write-Host "[✓] Installer copied successfully" -ForegroundColor Green
+                    Write-Status -Status Success -Message "Installer copied successfully"
 
                     # Step 3: Optional arguments
-                    Write-Host "`n[>] Installation arguments (optional): " `
-                        -ForegroundColor Yellow `
-                        -NoNewline
-
-                    $Arguments = Read-Host
+                    Write-Host ""
+                    $Arguments = Read-UserInput -Prompt "Installation arguments (optional)"
 
                     # Step 4: Execute installation
-                    Write-Host "`n[*] Installing software on $Computer..." -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Status -Status Running -Message "Installing software on $Computer..."
                     $InstallResult = Install-RemoteSoftware `
                         -ComputerName $Computer `
                         -InstallerPath $CopyResult.LocalPathOnly `
@@ -489,17 +495,16 @@ function Invoke-SoftwareMenu {
                         Show-ExecutionResult `
                             -Status Success `
                             -Message "Software installed successfully" `
-                            -Details @"
-Computer       : $($InstallResult.ComputerName)
-Software       : $SoftwareName
-Installer      : $($Installer.Name)
-Exit Code      : $($InstallResult.ExitCode)
-Reboot needed  : $(if ($InstallResult.RebootRequired) { "Yes" } else { "No" })
-Duration       : $($InstallResult.Duration) ms
-
-Output:
-$($InstallResult.Output)
-"@
+                            -Properties ([ordered]@{
+                                'Computer'      = $InstallResult.ComputerName
+                                'Software'      = $SoftwareName
+                                'Installer'     = $Installer.Name
+                                'Exit Code'     = $InstallResult.ExitCode
+                                'Reboot needed' = $(if ($InstallResult.RebootRequired) { "Yes" } else { "No" })
+                                'Duration'      = "$($InstallResult.Duration) ms"
+                            }) `
+                            -DetailsTitle "Output:" `
+                            -Details $InstallResult.Output
                     }
                     else {
                         Write-Log `
@@ -509,14 +514,13 @@ $($InstallResult.Output)
                         Show-ExecutionResult `
                             -Status Error `
                             -Message "Installation failed" `
-                            -Details @"
-Computer  : $($InstallResult.ComputerName)
-Software  : $SoftwareName
-Exit Code : $($InstallResult.ExitCode)
-
-Error:
-$($InstallResult.Error)
-"@
+                            -Properties ([ordered]@{
+                                'Computer'  = $InstallResult.ComputerName
+                                'Software'  = $SoftwareName
+                                'Exit Code' = $InstallResult.ExitCode
+                            }) `
+                            -DetailsTitle "Error:" `
+                            -Details $InstallResult.Error
                     }
                 }
                 catch {
@@ -536,12 +540,9 @@ $($InstallResult.Error)
                 # Uninstall software
                 # ------------------------------------------------
 
-                Write-Host ""
-                Write-Host "[>] Computer name: " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
+                Show-Section -Title "Uninstall software"
 
-                $Computer = Read-Host
+                $Computer = Read-UserInput -Prompt "Computer name"
 
                 if ([string]::IsNullOrWhiteSpace($Computer)) {
                     Write-Log `
@@ -550,11 +551,7 @@ $($InstallResult.Error)
                     continue
                 }
 
-                Write-Host "[>] Software name (to search): " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
-
-                $SoftwareName = Read-Host
+                $SoftwareName = Read-UserInput -Prompt "Software name (to search)"
 
                 if ([string]::IsNullOrWhiteSpace($SoftwareName)) {
                     Write-Log `
@@ -574,7 +571,8 @@ $($InstallResult.Error)
                         -Message "Starting software uninstall workflow"
 
                     # Step 1: Get uninstall command
-                    Write-Host "`n[*] Searching for software..." -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Status -Status Running -Message "Searching for software on $Computer..."
                     $FoundSoftware = @(
                         Get-InstalledSoftware -ComputerName $Computer |
                             Where-Object { $_.Name -like "*$SoftwareName*" }
@@ -612,33 +610,28 @@ $($InstallResult.Error)
                         continue
                     }
 
-                    Write-Host "[✓] Software found: $($Software.Name)" -ForegroundColor Green
-                    Write-Host "   Version   : $($Software.Version)" -ForegroundColor Gray
-                    Write-Host "   Publisher : $($Software.Publisher)" -ForegroundColor Gray
-                    Write-Host "   Scope     : $($Software.Scope)" -ForegroundColor Gray
-                    Write-Host "   Installer : $($Plan.InstallerType)" -ForegroundColor Gray
-                    Write-Host "   Command   : $($Plan.CommandLine)" -ForegroundColor Gray
+                    Write-Status -Status Success -Message "Software found: $($Software.Name)"
+                    Write-Host ""
+                    Show-Properties -Properties ([ordered]@{
+                        'Version'   = $Software.Version
+                        'Publisher' = $Software.Publisher
+                        'Scope'     = $Software.Scope
+                        'Installer' = $Plan.InstallerType
+                        'Command'   = $Plan.CommandLine
+                    })
 
                     $CustomArguments = ""
 
                     if (-not $Plan.Silent) {
-                        Write-Host "`n[!] No silent switch is known for this uninstaller." -ForegroundColor Yellow
-                        Write-Host "    Without one it may wait for a window nobody can see until the timeout." -ForegroundColor Yellow
-                        Write-Host "[>] Silent arguments (optional, replaces current arguments): " `
-                            -ForegroundColor Yellow `
-                            -NoNewline
+                        Write-Host ""
+                        Write-Status -Status Warning -Message "No silent switch is known for this uninstaller."
+                        Write-Host "      Without one it may wait for a window nobody can see until the timeout." -ForegroundColor Yellow
 
-                        $CustomArguments = Read-Host
+                        $CustomArguments = Read-UserInput -Prompt "Silent arguments (optional, replaces current arguments)"
                     }
 
                     # Step 3: Confirm uninstall
-                    Write-Host "`n[!] Are you sure you want to uninstall this software? (yes/no): " `
-                        -ForegroundColor Yellow `
-                        -NoNewline
-
-                    $Confirm = Read-Host
-
-                    if ($Confirm -ne "yes") {
+                    if (-not (Read-Confirmation -Prompt "Uninstall $($Software.Name) from ${Computer}?")) {
                         Write-Log `
                             -Level Info `
                             -Message "Uninstall cancelled by user"
@@ -650,7 +643,8 @@ $($InstallResult.Error)
                     }
 
                     # Step 4: Execute uninstall and verify removal
-                    Write-Host "`n[*] Uninstalling software on $Computer..." -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Status -Status Running -Message "Uninstalling software on $Computer..."
                     $UninstallResult = Uninstall-RemoteSoftware `
                         -ComputerName $Computer `
                         -Software $Software `
@@ -664,20 +658,19 @@ $($InstallResult.Error)
                         Show-ExecutionResult `
                             -Status Success `
                             -Message "Software uninstalled successfully" `
-                            -Details @"
-Computer   : $($UninstallResult.ComputerName)
-Software   : $($Software.Name)
-Version    : $($Software.Version)
-Installer  : $($UninstallResult.UninstallerType)
-Command    : $($UninstallResult.UninstallCmd)
-Exit Code  : $($UninstallResult.ExitCode)
-Verified   : $(if ($UninstallResult.Verified) { "Yes (removed from registry)" } else { "No" })
-Reboot     : $(if ($UninstallResult.RebootRequired) { "Required" } else { "Not required" })
-Duration   : $($UninstallResult.Duration) ms
-
-Output:
-$($UninstallResult.Output)
-"@
+                            -Properties ([ordered]@{
+                                'Computer'  = $UninstallResult.ComputerName
+                                'Software'  = $Software.Name
+                                'Version'   = $Software.Version
+                                'Installer' = $UninstallResult.UninstallerType
+                                'Command'   = $UninstallResult.UninstallCmd
+                                'Exit Code' = $UninstallResult.ExitCode
+                                'Verified'  = $(if ($UninstallResult.Verified) { "Yes (removed from registry)" } else { "No" })
+                                'Reboot'    = $(if ($UninstallResult.RebootRequired) { "Required" } else { "Not required" })
+                                'Duration'  = "$($UninstallResult.Duration) ms"
+                            }) `
+                            -DetailsTitle "Output:" `
+                            -Details $UninstallResult.Output
                     }
                     else {
                         Write-Log `
@@ -687,16 +680,15 @@ $($UninstallResult.Output)
                         Show-ExecutionResult `
                             -Status Error `
                             -Message "Uninstall failed" `
-                            -Details @"
-Computer  : $($UninstallResult.ComputerName)
-Software  : $($Software.Name)
-Installer : $($UninstallResult.UninstallerType)
-Command   : $($UninstallResult.UninstallCmd)
-Exit Code : $($UninstallResult.ExitCode)
-
-Error:
-$($UninstallResult.Error)
-"@
+                            -Properties ([ordered]@{
+                                'Computer'  = $UninstallResult.ComputerName
+                                'Software'  = $Software.Name
+                                'Installer' = $UninstallResult.UninstallerType
+                                'Command'   = $UninstallResult.UninstallCmd
+                                'Exit Code' = $UninstallResult.ExitCode
+                            }) `
+                            -DetailsTitle "Error:" `
+                            -Details $UninstallResult.Error
                     }
                 }
                 catch {
@@ -716,12 +708,9 @@ $($UninstallResult.Error)
                 # List installed software
                 # ------------------------------------------------
 
-                Write-Host ""
-                Write-Host "[>] Computer name: " `
-                    -ForegroundColor Yellow `
-                    -NoNewline
+                Show-Section -Title "List installed software"
 
-                $Computer = Read-Host
+                $Computer = Read-UserInput -Prompt "Computer name"
 
                 if ([string]::IsNullOrWhiteSpace($Computer)) {
                     Write-Log `
@@ -735,8 +724,9 @@ $($UninstallResult.Error)
                         -Level Info `
                         -Message "Fetching installed software from $Computer"
 
-                    Write-Host "`n[*] Querying installed software on $Computer..." -ForegroundColor Cyan
-                    $InstalledSoftware = Get-InstalledSoftware -ComputerName $Computer
+                    Write-Host ""
+                    Write-Status -Status Running -Message "Querying installed software on $Computer..."
+                    $InstalledSoftware = @(Get-InstalledSoftware -ComputerName $Computer)
 
                     if ($InstalledSoftware.Count -eq 0) {
                         Show-ExecutionResult `
@@ -748,22 +738,32 @@ $($UninstallResult.Error)
 
                     Write-Log `
                         -Level Info `
-                        -Message "Retrieved $(@($InstalledSoftware).Count) software entries from $Computer"
+                        -Message "Retrieved $($InstalledSoftware.Count) software entries from $Computer"
 
-                    # Format and display software list
-                    $SoftwareList = $InstalledSoftware | ForEach-Object {
+                    # Tabela em duas colunas: nome (truncado) e versão
+                    $NameWidth = [math]::Min(
+                        48,
+                        ($InstalledSoftware | ForEach-Object { "$($_.Name)".Length } | Measure-Object -Maximum).Maximum
+                    )
+
+                    $SoftwareList = $InstalledSoftware | Sort-Object -Property Name | ForEach-Object {
+                        $Name = "$($_.Name)"
+
+                        if ($Name.Length -gt $NameWidth) {
+                            $Name = $Name.Substring(0, $NameWidth - 3) + "..."
+                        }
+
                         $Version = if ($_.Version) { $_.Version } else { "N/A" }
-                        "  • $($_.Name) (v$Version)"
+                        "$($Name.PadRight($NameWidth))  $Version"
                     }
+
+                    $Header = "$("NAME".PadRight($NameWidth))  VERSION"
 
                     Show-ExecutionResult `
                         -Status Success `
                         -Message "Installed software on $Computer" `
-                        -Details @"
-Total software installed: $(@($InstalledSoftware).Count)
-
-$($SoftwareList -join "`n")
-"@
+                        -Properties ([ordered]@{ 'Total' = $InstalledSoftware.Count }) `
+                        -Details (@($Header) + @($SoftwareList) -join "`n")
                 }
                 catch {
                     Write-Log `
@@ -799,18 +799,11 @@ function Invoke-SettingsMenu {
 
     while ($true) {
 
-        Clear-Host
+        Show-Screen -Subtitle "Settings"
 
-        Show-Banner `
-            -Title "Universal Remote Toolkit" `
-            -Subtitle "Settings"
-
-        Show-MainMenu `
-            -MenuItems $SettingsMenu `
+        $Choice = Read-MenuChoice `
+            -Menu $SettingsMenu `
             -Description "Select a settings option:"
-
-        $Choice = Read-MenuSelection `
-            -ValidOptions @(0, 1, 2, 3)
 
         Write-Log `
             -Level Info `
@@ -833,7 +826,15 @@ function Invoke-SettingsMenu {
             3 {
                 Show-ExecutionResult `
                     -Status Info `
-                    -Message "Universal Remote Toolkit v1.0 - Remote Administration Console"
+                    -Message "$($Config.Application.Name) - Remote Administration Console" `
+                    -Properties ([ordered]@{
+                        'Version'    = $Config.Application.Version
+                        'Company'    = $Config.Company.Name
+                        'PowerShell' = $PSVersionTable.PSVersion
+                        'Root'       = $ProjectRoot
+                        'Repository' = $Config.Software.RepositoryPath
+                        'Admin'      = $(if (Test-IsAdministrator) { "Yes" } else { "No" })
+                    })
             }
 
             0 {
@@ -858,18 +859,11 @@ function Start-UniversalRemoteToolkit {
 
     while ($true) {
 
-        Clear-Host
+        Show-Screen -Subtitle "Remote Administration Console  v$($Config.Application.Version)"
 
-        Show-Banner `
-            -Title "Universal Remote Toolkit" `
-            -Subtitle "Remote Administration Console"
-
-        Show-MainMenu `
-            -MenuItems $MainMenu `
+        $Choice = Read-MenuChoice `
+            -Menu $MainMenu `
             -Description "Select an option:"
-
-        $Choice = Read-MenuSelection `
-            -ValidOptions @(0, 1, 2, 3)
 
         Write-Log `
             -Level Info `
@@ -878,17 +872,14 @@ function Start-UniversalRemoteToolkit {
         switch ($Choice) {
 
             1 {
-                Clear-Host
                 Invoke-ExecutionMenu
             }
 
             2 {
-                Clear-Host
                 Invoke-SoftwareMenu
             }
 
             3 {
-                Clear-Host
                 Invoke-SettingsMenu
             }
 
@@ -900,7 +891,7 @@ function Start-UniversalRemoteToolkit {
 
                 Show-ExecutionResult `
                     -Status Info `
-                    -Message "Universal Remote Toolkit shutting down..." `
+                    -Message "$($Config.Application.Name) shutting down..." `
                     -Pause $false
 
                 return
@@ -918,6 +909,8 @@ try {
     Write-Log `
         -Level Info `
         -Message "Starting main application"
+
+    Initialize-ConsoleUI -Title "$($Config.Application.Name) v$($Config.Application.Version)"
 
     Start-UniversalRemoteToolkit
 
