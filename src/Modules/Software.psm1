@@ -2,31 +2,15 @@
 # Universal Remote Toolkit
 # Module: Software Management
 # Description: Universal software installation and uninstallation
-# Version: 2.0
 # ============================================================
 
-
 # ============================================================
-# CONFIGURATION
-# ============================================================
-
-$Config = Get-ToolkitConfig
-
-$REPOSITORY_PATH = $Config.Software.RepositoryPath
-$TEMP_SCRIPT_PATH = $Config.Software.RemoteTempPath
-$SUPPORTED_INSTALLERS = $Config.Software.SupportedInstallers
-
-$DEFAULT_INSTALL_TIMEOUT = $Config.Software.DefaultInstallTimeout
-$DEFAULT_UNINSTALL_TIMEOUT = $Config.Software.DefaultUninstallTimeout
-
-
-# ============================================================
-# INTERNAL CONSTANTS
+# CONSTANTS
 # ============================================================
 
-$SUCCESS_EXIT_CODES = @(0, 3010, 1641)
-$REBOOT_REQUIRED_EXIT_CODES = @(3010, 1641)
-
+$REPOSITORY_PATH = "\\fsrctrppw01\aplicativos"
+$TEMP_SCRIPT_PATH = "C:\script_temp"
+$SUPPORTED_INSTALLERS = @(".exe", ".msi", ".ps1")
 
 # ============================================================
 # GET SOFTWARE REPOSITORY
@@ -37,195 +21,92 @@ $REBOOT_REQUIRED_EXIT_CODES = @(3010, 1641)
     Lists available software installers in the network repository.
 
 .DESCRIPTION
-    Scans the configured software repository recursively and returns
-    all supported installers.
-
-    Supported installer types are controlled by the configuration
-    value Software.SupportedInstallers.
+    Scans the network repository path and returns available software
+    installers with their full paths.
 
 .PARAMETER Filter
     Optional filter to search by software name.
 
+.OUTPUTS
+    System.Object[]
+    Returns an array of PSCustomObjects with installer information.
+
 .EXAMPLE
     Get-SoftwareRepository
 
-    Lists all supported installers in the repository.
+    Lists all available installers in the repository.
 
 .EXAMPLE
     Get-SoftwareRepository -Filter "Chrome"
 
-    Searches recursively for installers containing "Chrome".
-
-.OUTPUTS
-    PSCustomObject[]
+    Lists installers containing "Chrome" in the name.
 #>
-
 function Get-SoftwareRepository {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory = $false)]
         [string]$Filter = ""
     )
 
     process {
-
         try {
-
             Write-Log `
                 -Level Info `
                 -Message "Scanning software repository: $REPOSITORY_PATH"
 
-
-            # ------------------------------------------------
-            # Validate repository
-            # ------------------------------------------------
-
             if (-not (Test-Path -Path $REPOSITORY_PATH)) {
-
                 throw "Repository not accessible: $REPOSITORY_PATH"
             }
 
+            $Installers = @()
 
-            # ------------------------------------------------
-            # Find installers
-            # ------------------------------------------------
-
-            $NormalizedExtensions = @(
-                $SUPPORTED_INSTALLERS |
-                    ForEach-Object {
-
-                        $NormalizedExtension = $_.ToLower()
-
-                        if (-not $NormalizedExtension.StartsWith(".")) {
-                            $NormalizedExtension = ".$NormalizedExtension"
-                        }
-
-                        $NormalizedExtension
-                    }
-            )
-
-
-            # Single recursive pass over the repository, filtered in memory,
-            # instead of one full recursive scan per supported extension.
-            $Installers = @(
-                Get-ChildItem `
+            # Procura por arquivos de instalação (até 5 níveis de profundidade)
+            foreach ($Extension in $SUPPORTED_INSTALLERS) {
+                $Files = Get-ChildItem `
                     -Path $REPOSITORY_PATH `
+                    -Filter "*$Extension" `
                     -File `
                     -Recurse `
-                    -ErrorAction Stop |
-                    Where-Object {
-                        $_.Extension.ToLower() -in $NormalizedExtensions
-                    }
-            )
+                    -Depth 5 `
+                    -ErrorAction SilentlyContinue
 
-
-            # ------------------------------------------------
-            # Apply filter
-            # ------------------------------------------------
-
-            if (-not [string]::IsNullOrWhiteSpace($Filter)) {
-
-                $Installers = @(
-                    $Installers |
-                        Where-Object {
-                            $_.Name -like "*$Filter*"
-                        }
-                )
+                if ($Files) {
+                    $Installers += $Files
+                }
             }
 
+            # Aplica filtro se fornecido
+            if (-not [string]::IsNullOrWhiteSpace($Filter)) {
+                $Installers = $Installers | Where-Object {
+                    $_.Name -like "*$Filter*"
+                }
+            }
 
-            # ------------------------------------------------
-            # Build structured result
-            # ------------------------------------------------
-
-            $Results = @(
-                $Installers |
-                    Sort-Object FullName |
-                    ForEach-Object {
-
-                        $InstallerType = switch ($_.Extension.ToLower()) {
-
-                            ".msi" {
-                                "MSI"
-                                break
-                            }
-
-                            ".ps1" {
-                                "PowerShell"
-                                break
-                            }
-
-                            ".exe" {
-                                "Executable"
-                                break
-                            }
-
-                            default {
-                                "Unknown"
-                                break
-                            }
-                        }
-
-
-                        $RelativePath = $_.FullName
-
-                        if ($RelativePath.StartsWith($REPOSITORY_PATH)) {
-
-                            $RelativePath = $RelativePath.Substring(
-                                $REPOSITORY_PATH.Length
-                            ).TrimStart(
-                                '\',
-                                '/'
-                            )
-                        }
-
-
-                        [PSCustomObject]@{
-
-                            Name = $_.Name
-
-                            FullPath = $_.FullName
-
-                            RelativePath = $RelativePath
-
-                            Extension = $_.Extension
-
-                            InstallerType = $InstallerType
-
-                            Size = $_.Length
-
-                            SizeMB = [math]::Round(
-                                $_.Length / 1MB,
-                                2
-                            )
-
-                            LastModified = $_.LastWriteTime
-                        }
-                    }
-            )
-
+            # Retorna resultado estruturado
+            $Installers | ForEach-Object {
+                [PSCustomObject]@{
+                    Name          = $_.Name
+                    FullPath      = $_.FullName
+                    Extension     = $_.Extension
+                    Size          = $_.Length
+                    LastModified  = $_.LastWriteTime
+                    InstallerType = if ($_.Extension -eq ".msi") { "MSI" } elseif ($_.Extension -eq ".ps1") { "PowerShell" } else { "Executable" }
+                }
+            }
 
             Write-Log `
                 -Level Info `
-                -Message "Repository scan completed. Found $($Results.Count) installers."
-
-
-            return $Results
+                -Message "Repository scan completed. Found $(@($Installers).Count) installers."
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
                 -Message "Error scanning repository: $($_.Exception.Message)"
 
-            throw
+            throw $_
         }
     }
 }
-
 
 # ============================================================
 # FIND SOFTWARE INSTALLER
@@ -233,28 +114,20 @@ function Get-SoftwareRepository {
 
 <#
 .SYNOPSIS
-    Searches for software installers in the repository.
-
-.DESCRIPTION
-    Returns all installers matching the requested software name.
-
-    Unlike the previous implementation, this function does not
-    automatically select the first result.
+    Searches for a specific software installer in the repository.
 
 .PARAMETER SoftwareName
     Name of the software to search for.
 
+.OUTPUTS
+    System.Object
+    Returns a PSCustomObject with installer details, or $null if not found.
+
 .EXAMPLE
     Find-SoftwareInstaller -SoftwareName "Chrome"
-
-.OUTPUTS
-    PSCustomObject[]
 #>
-
 function Find-SoftwareInstaller {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -262,49 +135,39 @@ function Find-SoftwareInstaller {
     )
 
     process {
-
         try {
-
             Write-Log `
                 -Level Info `
                 -Message "Searching for installer: $SoftwareName"
 
+            $Repository = Get-SoftwareRepository -Filter $SoftwareName
 
-            $Repository = @(
-                Get-SoftwareRepository `
-                    -Filter $SoftwareName
-            )
+            if ($Repository) {
+                $Installer = $Repository | Select-Object -First 1
 
+                Write-Log `
+                    -Level Info `
+                    -Message "Installer found: $($Installer.Name)"
 
-            if ($Repository.Count -eq 0) {
-
+                return $Installer
+            }
+            else {
                 Write-Log `
                     -Level Warning `
                     -Message "No installer found for: $SoftwareName"
 
-                return @()
+                return $null
             }
-
-
-            Write-Log `
-                -Level Info `
-                -Message "Found $($Repository.Count) installer candidate(s) for: $SoftwareName"
-
-
-            return $Repository
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
                 -Message "Error finding installer: $($_.Exception.Message)"
 
-            throw
+            throw $_
         }
     }
 }
-
 
 # ============================================================
 # COPY SOFTWARE TO REMOTE
@@ -312,31 +175,23 @@ function Find-SoftwareInstaller {
 
 <#
 .SYNOPSIS
-    Copies a software installer to a remote computer.
-
-.DESCRIPTION
-    Creates C:\script_temp on the remote computer if necessary
-    and copies the selected installer to that directory.
+    Copies a software installer to the remote computer's temp directory.
 
 .PARAMETER ComputerName
     Name of the remote computer.
 
 .PARAMETER InstallerPath
-    Full path to the installer in the network repository.
-
-.EXAMPLE
-    Copy-SoftwareToRemote `
-        -ComputerName "PC-001" `
-        -InstallerPath "\\fsrctrppw01\aplicativos\Chrome\Chrome.exe"
+    Full path to the installer file.
 
 .OUTPUTS
-    PSCustomObject
+    System.Object
+    Returns PSCustomObject with copy status and remote path.
+
+.EXAMPLE
+    Copy-SoftwareToRemote -ComputerName "PC-001" -InstallerPath "\\server\path\installer.exe"
 #>
-
 function Copy-SoftwareToRemote {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -348,237 +203,62 @@ function Copy-SoftwareToRemote {
     )
 
     process {
-
         try {
-
-            # ------------------------------------------------
-            # Validate installer
-            # ------------------------------------------------
-
-            if (-not (Test-Path -Path $InstallerPath -PathType Leaf)) {
-
+            if (-not (Test-Path -Path $InstallerPath)) {
                 throw "Installer file not found: $InstallerPath"
             }
 
-
             Write-Log `
                 -Level Info `
-                -Message "Preparing installer transfer to $ComputerName"
+                -Message "Copying installer to $ComputerName"
 
+            $InstallerName = Split-Path -Leaf $InstallerPath
+            $RemotePath = "\\$ComputerName\C$\script_temp"
 
-            # ------------------------------------------------
-            # Check remote computer
-            # ------------------------------------------------
-
-            if (-not (Test-ComputerReachable -ComputerName $ComputerName)) {
-
-                throw "Computer is not reachable: $ComputerName"
-            }
-
-
-            # ------------------------------------------------
-            # Build remote path
-            # ------------------------------------------------
-
-            $InstallerName = Split-Path `
-                -Path $InstallerPath `
-                -Leaf
-
-            $RemoteDirectory = "\\$ComputerName\C$\script_temp"
-
-            $RemoteFilePath = Join-Path `
-                -Path $RemoteDirectory `
-                -ChildPath $InstallerName
-
-
-            # ------------------------------------------------
-            # Create remote directory
-            # ------------------------------------------------
-
-            if (-not (Test-Path -Path $RemoteDirectory)) {
-
+            # Cria diretório se não existir
+            if (-not (Test-Path -Path $RemotePath)) {
+                New-Item -ItemType Directory -Path $RemotePath -Force -ErrorAction Stop | Out-Null
                 Write-Log `
                     -Level Info `
-                    -Message "Creating remote directory: $RemoteDirectory"
-
-
-                New-Item `
-                    -ItemType Directory `
-                    -Path $RemoteDirectory `
-                    -Force `
-                    -ErrorAction Stop |
-                    Out-Null
+                    -Message "Created remote directory: $RemotePath"
             }
 
-
-            # ------------------------------------------------
-            # Copy installer
-            # ------------------------------------------------
-
-            Write-Log `
-                -Level Info `
-                -Message "Copying $InstallerName to $ComputerName"
-
-
-            Copy-Item `
-                -Path $InstallerPath `
-                -Destination $RemoteFilePath `
-                -Force `
-                -ErrorAction Stop
-
-
-            # ------------------------------------------------
-            # Validate copy
-            # ------------------------------------------------
-
-            if (-not (Test-Path -Path $RemoteFilePath -PathType Leaf)) {
-
-                throw "Installer copy could not be verified: $RemoteFilePath"
-            }
-
+            # Copia o arquivo
+            $RemoteFilePath = Join-Path $RemotePath $InstallerName
+            Copy-Item -Path $InstallerPath -Destination $RemoteFilePath -Force -ErrorAction Stop
 
             Write-Log `
                 -Level Info `
                 -Message "Installer copied successfully to $RemoteFilePath"
 
-
-            return [PSCustomObject]@{
-
-                Success = $true
-
-                ComputerName = $ComputerName
-
-                LocalPath = $InstallerPath
-
-                RemotePath = $RemoteFilePath
-
-                LocalPathOnly = "$TEMP_SCRIPT_PATH\$InstallerName"
-
-                FileName = $InstallerName
-
-                Error = $null
+            [PSCustomObject]@{
+                Success       = $true
+                ComputerName  = $ComputerName
+                LocalPath     = $InstallerPath
+                RemotePath    = $RemoteFilePath
+                FileName      = $InstallerName
+                LocalPathOnly = "C:\script_temp\$InstallerName"
             }
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
                 -Message "Error copying installer to $ComputerName`: $($_.Exception.Message)"
 
-
-            return [PSCustomObject]@{
-
-                Success = $false
-
-                ComputerName = $ComputerName
-
-                LocalPath = $InstallerPath
-
-                RemotePath = $null
-
-                LocalPathOnly = $null
-
-                FileName = if ($InstallerPath) {
-                    Split-Path -Path $InstallerPath -Leaf
-                }
-                else {
-                    $null
-                }
-
-                Error = $_.Exception.Message
+            [PSCustomObject]@{
+                Success       = $false
+                ComputerName  = $ComputerName
+                LocalPath     = $InstallerPath
+                RemotePath    = $null
+                FileName      = Split-Path -Leaf $InstallerPath
+                Error         = $_.Exception.Message
             }
         }
     }
 }
 
-
 # ============================================================
-# BUILD INSTALL COMMAND
-# ============================================================
-
-<#
-.SYNOPSIS
-    Builds the installation command for an installer.
-
-.DESCRIPTION
-    Internal helper used by Install-RemoteSoftware.
-
-    Handles EXE, MSI and PowerShell installers independently.
-
-.PARAMETER InstallerPath
-    Path of the installer on the remote computer.
-
-.PARAMETER Arguments
-    Optional installer arguments.
-
-.OUTPUTS
-    System.String
-#>
-
-function New-SoftwareInstallCommand {
-
-    [CmdletBinding()]
-
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$InstallerPath,
-
-        [Parameter(Mandatory = $false)]
-        [string]$Arguments = ""
-    )
-
-    $Extension = [System.IO.Path]::GetExtension(
-        $InstallerPath
-    ).ToLower()
-
-
-    switch ($Extension) {
-
-        ".msi" {
-
-            if ([string]::IsNullOrWhiteSpace($Arguments)) {
-
-                return "msiexec.exe /i `"$InstallerPath`" /quiet /norestart"
-            }
-
-            return "msiexec.exe /i `"$InstallerPath`" $Arguments"
-        }
-
-
-        ".ps1" {
-
-            if ([string]::IsNullOrWhiteSpace($Arguments)) {
-
-                return "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallerPath`""
-            }
-
-            return "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InstallerPath`" $Arguments"
-        }
-
-
-        ".exe" {
-
-            if ([string]::IsNullOrWhiteSpace($Arguments)) {
-
-                return "`"$InstallerPath`""
-            }
-
-            return "`"$InstallerPath`" $Arguments"
-        }
-
-
-        default {
-
-            throw "Unsupported installer type: $Extension"
-        }
-    }
-}
-
-
-# ============================================================
-# INSTALL REMOTE SOFTWARE
+# INSTALL SOFTWARE
 # ============================================================
 
 <#
@@ -586,43 +266,33 @@ function New-SoftwareInstallCommand {
     Installs software on a remote computer.
 
 .DESCRIPTION
-    Executes an installer already present on the remote computer.
-
-    This is the low-level installation function.
-
-    Use Install-Software for the complete workflow.
+    Executes an installer on a remote computer using PsExec.
+    Supports .exe, .msi, and .ps1 installers.
 
 .PARAMETER ComputerName
     Name of the remote computer.
 
 .PARAMETER InstallerPath
-    Path of the installer on the remote computer.
+    Local path to the installer on the remote computer (e.g., C:\script_temp\installer.exe).
 
 .PARAMETER Arguments
-    Optional installer arguments.
+    Optional arguments to pass to the installer.
 
 .PARAMETER TimeoutSeconds
-    Maximum execution time.
-
-.EXAMPLE
-    Install-RemoteSoftware `
-        -ComputerName "PC-001" `
-        -InstallerPath "C:\script_temp\Chrome.exe"
-
-.EXAMPLE
-    Install-RemoteSoftware `
-        -ComputerName "PC-001" `
-        -InstallerPath "C:\script_temp\Chrome.exe" `
-        -Arguments "/silent"
+    Maximum execution time in seconds (default: 300).
 
 .OUTPUTS
-    PSCustomObject
+    System.Object
+    Returns installation result with status and details.
+
+.EXAMPLE
+    Install-RemoteSoftware -ComputerName "PC-001" -InstallerPath "C:\script_temp\installer.exe"
+
+.EXAMPLE
+    Install-RemoteSoftware -ComputerName "PC-001" -InstallerPath "C:\script_temp\setup.msi" -Arguments "/quiet /norestart"
 #>
-
 function Install-RemoteSoftware {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -637,430 +307,105 @@ function Install-RemoteSoftware {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = $DEFAULT_INSTALL_TIMEOUT
+        [int]$TimeoutSeconds = 300
     )
 
     process {
-
         try {
-
             Write-Log `
                 -Level Info `
                 -Message "Installing software on $ComputerName from $InstallerPath"
 
+            # Determina o tipo de instalador e argumentos padrão
+            $Extension = [System.IO.Path]::GetExtension($InstallerPath).ToLower()
 
-            # ------------------------------------------------
-            # Build command
-            # ------------------------------------------------
+            $InstallCommand = switch ($Extension) {
+                ".msi" {
+                    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+                        "$InstallerPath /quiet /norestart"
+                    }
+                    else {
+                        "$InstallerPath $Arguments"
+                    }
+                }
 
-            $InstallCommand = New-SoftwareInstallCommand `
-                -InstallerPath $InstallerPath `
-                -Arguments $Arguments
+                ".ps1" {
+                    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+                        "powershell.exe -ExecutionPolicy Bypass -File `"$InstallerPath`""
+                    }
+                    else {
+                        "powershell.exe -ExecutionPolicy Bypass -File `"$InstallerPath`" $Arguments"
+                    }
+                }
 
+                ".exe" {
+                    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+                        $InstallerPath
+                    }
+                    else {
+                        "$InstallerPath $Arguments"
+                    }
+                }
 
-            Write-Log `
-                -Level Info `
-                -Message "Installation command prepared for $ComputerName"
+                default {
+                    throw "Unsupported installer type: $Extension"
+                }
+            }
 
-
-            # ------------------------------------------------
-            # Execute
-            # ------------------------------------------------
-
+            # Executa via PsExec
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
                 -Executable "cmd.exe" `
                 -Arguments "/c $InstallCommand" `
                 -TimeoutSeconds $TimeoutSeconds
 
-
-            $ExitCode = $Result.ExitCode
-
-            $Success = (
-                $Result.Success -or
-                $ExitCode -in $SUCCESS_EXIT_CODES
-            )
-
-            $RebootRequired = (
-                $ExitCode -in $REBOOT_REQUIRED_EXIT_CODES
-            )
-
-
-            if ($Success) {
-
+            if ($Result.Success -or $Result.ExitCode -eq 0) {
                 Write-Log `
                     -Level Info `
-                    -Message "Software installation completed on $ComputerName with exit code $ExitCode"
-
+                    -Message "Software installed successfully on $ComputerName"
 
                 return [PSCustomObject]@{
-
-                    Success = $true
-
-                    ComputerName = $ComputerName
-
+                    Success       = $true
+                    ComputerName  = $ComputerName
                     InstallerPath = $InstallerPath
-
-                    InstallCommand = $InstallCommand
-
-                    ExitCode = $ExitCode
-
-                    RebootRequired = $RebootRequired
-
-                    TimedOut = $Result.TimedOut
-
-                    Output = $Result.Output
-
-                    Error = $Result.Error
-
-                    Duration = $Result.DurationMS
-
-                    Timestamp = Get-Date
+                    ExitCode      = $Result.ExitCode
+                    Output        = $Result.Output
+                    Duration      = $Result.DurationMS
+                    Timestamp     = Get-Date
                 }
             }
+            else {
+                Write-Log `
+                    -Level Error `
+                    -Message "Installation failed on $ComputerName with exit code: $($Result.ExitCode)"
 
-
-            Write-Log `
-                -Level Error `
-                -Message "Installation failed on $ComputerName with exit code: $ExitCode"
-
-
-            return [PSCustomObject]@{
-
-                Success = $false
-
-                ComputerName = $ComputerName
-
-                InstallerPath = $InstallerPath
-
-                InstallCommand = $InstallCommand
-
-                ExitCode = $ExitCode
-
-                RebootRequired = $false
-
-                TimedOut = $Result.TimedOut
-
-                Output = $Result.Output
-
-                Error = $Result.Error
-
-                Duration = $Result.DurationMS
-
-                Timestamp = Get-Date
+                return [PSCustomObject]@{
+                    Success       = $false
+                    ComputerName  = $ComputerName
+                    InstallerPath = $InstallerPath
+                    ExitCode      = $Result.ExitCode
+                    Error         = $Result.Error
+                    Output        = $Result.Output
+                    Duration      = $Result.DurationMS
+                    Timestamp     = Get-Date
+                }
             }
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
                 -Message "Error installing software on $ComputerName`: $($_.Exception.Message)"
 
-
             return [PSCustomObject]@{
-
-                Success = $false
-
-                ComputerName = $ComputerName
-
+                Success       = $false
+                ComputerName  = $ComputerName
                 InstallerPath = $InstallerPath
-
-                InstallCommand = $null
-
-                ExitCode = $null
-
-                RebootRequired = $false
-
-                TimedOut = $false
-
-                Output = $null
-
-                Error = $_.Exception.Message
-
-                Duration = $null
-
-                Timestamp = Get-Date
+                Error         = $_.Exception.Message
+                Timestamp     = Get-Date
             }
         }
     }
 }
-
-
-# ============================================================
-# INSTALL WORKFLOW RESULT HELPER
-# ============================================================
-
-<#
-.SYNOPSIS
-    Builds a consistently-shaped result object for Install-Software.
-
-.DESCRIPTION
-    Internal helper ensuring every return path of Install-Software
-    exposes the same set of properties, regardless of which step of
-    the workflow produced the result.
-
-.OUTPUTS
-    PSCustomObject
-#>
-
-function New-InstallWorkflowResult {
-
-    [CmdletBinding()]
-
-    param(
-        [bool]$Success = $false,
-        [bool]$RequiresSelection = $false,
-        [string]$ComputerName,
-        [string]$SoftwareName,
-        $Installer = $null,
-        [array]$Installers = @(),
-        [string]$LocalPath = $null,
-        [string]$RemotePath = $null,
-        [string]$InstallerPath = $null,
-        [string]$InstallCommand = $null,
-        $ExitCode = $null,
-        [bool]$RebootRequired = $false,
-        [bool]$TimedOut = $false,
-        $Output = $null,
-        [string]$Error = $null,
-        $Duration = $null,
-        $WorkflowDuration = $null
-    )
-
-    [PSCustomObject]@{
-
-        Success = $Success
-        RequiresSelection = $RequiresSelection
-        ComputerName = $ComputerName
-        SoftwareName = $SoftwareName
-        Installer = $Installer
-        Installers = $Installers
-        LocalPath = $LocalPath
-        RemotePath = $RemotePath
-        InstallerPath = $InstallerPath
-        InstallCommand = $InstallCommand
-        ExitCode = $ExitCode
-        RebootRequired = $RebootRequired
-        TimedOut = $TimedOut
-        Output = $Output
-        Error = $Error
-        Duration = $Duration
-        WorkflowDuration = $WorkflowDuration
-        Timestamp = Get-Date
-    }
-}
-
-
-# ============================================================
-# INSTALL SOFTWARE WORKFLOW
-# ============================================================
-
-<#
-.SYNOPSIS
-    Executes the complete software installation workflow.
-
-.DESCRIPTION
-    Performs:
-
-        1. Computer validation
-        2. Repository search
-        3. Installer selection detection
-        4. File transfer
-        5. Remote installation
-        6. Consolidated result
-
-    If multiple installers are found, the function does not
-    automatically choose one. Instead it returns RequiresSelection
-    and the available installer candidates.
-
-.PARAMETER ComputerName
-    Name of the remote computer.
-
-.PARAMETER SoftwareName
-    Name of the software to install.
-
-.PARAMETER Arguments
-    Optional installer arguments.
-
-.PARAMETER TimeoutSeconds
-    Maximum installation time.
-
-.EXAMPLE
-    Install-Software `
-        -ComputerName "PC-001" `
-        -SoftwareName "Chrome"
-
-.EXAMPLE
-    Install-Software `
-        -ComputerName "PC-001" `
-        -SoftwareName "FortiClient" `
-        -Arguments "/quiet /norestart"
-
-.OUTPUTS
-    PSCustomObject
-#>
-
-function Install-Software {
-
-    [CmdletBinding()]
-
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$ComputerName,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$SoftwareName,
-
-        [Parameter(Mandatory = $false)]
-        [string]$Arguments = "",
-
-        [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = $DEFAULT_INSTALL_TIMEOUT
-    )
-
-    process {
-
-        $WorkflowStart = Get-Date
-
-        try {
-
-            Write-Log `
-                -Level Info `
-                -Message "Starting software installation workflow: $SoftwareName -> $ComputerName"
-
-
-            # ------------------------------------------------
-            # Check computer
-            # ------------------------------------------------
-
-            if (-not (Test-ComputerReachable -ComputerName $ComputerName)) {
-
-                throw "Computer is not reachable: $ComputerName"
-            }
-
-
-            # ------------------------------------------------
-            # Search installer
-            # ------------------------------------------------
-
-            $Installers = @(
-                Find-SoftwareInstaller `
-                    -SoftwareName $SoftwareName
-            )
-
-
-            if ($Installers.Count -eq 0) {
-
-                return New-InstallWorkflowResult `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName `
-                    -Error "No installer found for: $SoftwareName" `
-                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-            }
-
-
-            # ------------------------------------------------
-            # Multiple installers
-            # ------------------------------------------------
-
-            if ($Installers.Count -gt 1) {
-
-                Write-Log `
-                    -Level Warning `
-                    -Message "Multiple installers found for $SoftwareName. Selection required."
-
-
-                return New-InstallWorkflowResult `
-                    -RequiresSelection $true `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName `
-                    -Installers $Installers `
-                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-            }
-
-
-            # ------------------------------------------------
-            # Single installer
-            # ------------------------------------------------
-
-            $Installer = $Installers[0]
-
-
-            # ------------------------------------------------
-            # Copy
-            # ------------------------------------------------
-
-            $CopyResult = Copy-SoftwareToRemote `
-                -ComputerName $ComputerName `
-                -InstallerPath $Installer.FullPath
-
-
-            if (-not $CopyResult.Success) {
-
-                return New-InstallWorkflowResult `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName `
-                    -Installer $Installer `
-                    -Installers $Installers `
-                    -Error $CopyResult.Error `
-                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-            }
-
-
-            # ------------------------------------------------
-            # Install
-            # ------------------------------------------------
-
-            $InstallResult = Install-RemoteSoftware `
-                -ComputerName $ComputerName `
-                -InstallerPath $CopyResult.LocalPathOnly `
-                -Arguments $Arguments `
-                -TimeoutSeconds $TimeoutSeconds
-
-
-            # ------------------------------------------------
-            # Consolidated result
-            # ------------------------------------------------
-
-            return New-InstallWorkflowResult `
-                -Success $InstallResult.Success `
-                -ComputerName $ComputerName `
-                -SoftwareName $SoftwareName `
-                -Installer $Installer `
-                -Installers $Installers `
-                -LocalPath $Installer.FullPath `
-                -RemotePath $CopyResult.RemotePath `
-                -InstallerPath $CopyResult.LocalPathOnly `
-                -InstallCommand $InstallResult.InstallCommand `
-                -ExitCode $InstallResult.ExitCode `
-                -RebootRequired $InstallResult.RebootRequired `
-                -TimedOut $InstallResult.TimedOut `
-                -Output $InstallResult.Output `
-                -Error $InstallResult.Error `
-                -Duration $InstallResult.Duration `
-                -WorkflowDuration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-        }
-
-        catch {
-
-            Write-Log `
-                -Level Error `
-                -Message "Software installation workflow failed: $($_.Exception.Message)"
-
-
-            return New-InstallWorkflowResult `
-                -ComputerName $ComputerName `
-                -SoftwareName $SoftwareName `
-                -Error $_.Exception.Message `
-                -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-        }
-    }
-}
-
 
 # ============================================================
 # GET INSTALLED SOFTWARE
@@ -1071,32 +416,23 @@ function Install-Software {
     Lists installed software on a remote computer.
 
 .DESCRIPTION
-    Queries both 64-bit and 32-bit uninstall registry locations.
-
-    The function returns a structured result containing:
-        Success
-        ComputerName
-        Software
-        Count
-        Error
-
-    This prevents a failed registry query from being confused
-    with a computer that simply has no applications.
+    Queries the remote computer's registry to retrieve a list of
+    installed applications.
 
 .PARAMETER ComputerName
     Name of the remote computer.
 
+.OUTPUTS
+    System.Object[]
+    Returns array of installed software with names and versions.
+
 .EXAMPLE
     Get-InstalledSoftware -ComputerName "PC-001"
 
-.OUTPUTS
-    PSCustomObject
+    Lists all installed software on PC-001.
 #>
-
 function Get-InstalledSoftware {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -1104,194 +440,137 @@ function Get-InstalledSoftware {
     )
 
     process {
-
         try {
-
             Write-Log `
                 -Level Info `
                 -Message "Querying installed software on $ComputerName"
 
+            # PowerShell script para executar remotamente
+            # Usar aspas simples e escapar corretamente para remoto
+            $QueryScript = @"
+try {
+    `$RegPaths = @(
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
 
-            if (-not (Test-ComputerReachable -ComputerName $ComputerName)) {
+    `$InstalledApps = @()
 
-                throw "Computer is not reachable: $ComputerName"
-            }
+    foreach (`$RegPath in `$RegPaths) {
+        if (Test-Path `$RegPath) {
+            Get-ChildItem `$RegPath -ErrorAction SilentlyContinue | ForEach-Object {
+                `$DisplayName = `$_.GetValue('DisplayName')
+                `$DisplayVersion = `$_.GetValue('DisplayVersion')
+                `$UninstallString = `$_.GetValue('UninstallString')
 
-
-            # ------------------------------------------------
-            # Remote query script
-            # ------------------------------------------------
-
-            $QueryScript = @'
-$ErrorActionPreference = "Stop"
-
-$RegPaths = @(
-    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-)
-
-# Include per-user installs (e.g. VS Code, Zoom, Node) by scanning every
-# currently loaded user hive under HKEY_USERS. Hives of users who are not
-# logged in are not loaded and therefore cannot be inspected this way.
-if (-not (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue)) {
-    New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS -ErrorAction SilentlyContinue |
-        Out-Null
-}
-
-if (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue) {
-
-    $UserSids = Get-ChildItem -Path "HKU:\" -ErrorAction SilentlyContinue |
-        Where-Object { $_.PSChildName -match '^S-1-5-21-\d+-\d+-\d+-\d+$' } |
-        Select-Object -ExpandProperty PSChildName
-
-    foreach ($Sid in $UserSids) {
-        $RegPaths += "HKU:\$Sid\Software\Microsoft\Windows\CurrentVersion\Uninstall"
-    }
-}
-
-$InstalledApps = @()
-
-foreach ($RegPath in $RegPaths) {
-
-    if (Test-Path -Path $RegPath) {
-
-        Get-ChildItem -Path $RegPath -ErrorAction SilentlyContinue |
-            ForEach-Object {
-
-                $DisplayName = $_.GetValue("DisplayName")
-                $DisplayVersion = $_.GetValue("DisplayVersion")
-                $Publisher = $_.GetValue("Publisher")
-                $UninstallString = $_.GetValue("UninstallString")
-                $QuietUninstallString = $_.GetValue("QuietUninstallString")
-
-                if (-not [string]::IsNullOrWhiteSpace($DisplayName)) {
-
-                    [PSCustomObject]@{
-                        Name                  = $DisplayName
-                        Version               = $DisplayVersion
-                        Publisher             = $Publisher
-                        UninstallString       = $UninstallString
-                        QuietUninstallString  = $QuietUninstallString
-                        RegistryPath          = $_.PSPath
-                        Scope                 = if ($RegPath -like "HKU:*") { "User" } else { "Machine" }
+                if (`$DisplayName) {
+                    `$InstalledApps += [PSCustomObject]@{
+                        Name             = `$DisplayName
+                        Version          = `$DisplayVersion
+                        UninstallString  = `$UninstallString
+                        RegistryPath     = `$_.PSPath
                     }
                 }
             }
+        }
     }
+
+    if (`$InstalledApps.Count -gt 0) {
+        `$InstalledApps | Sort-Object Name | ConvertTo-Json -Depth 3
+    } else {
+        Write-Output '[]'
+    }
+} catch {
+    Write-Output '[]'
 }
+"@
 
-$InstalledApps |
-    Sort-Object Name |
-    ConvertTo-Json -Depth 5 -Compress
-'@
-
-
-            # ------------------------------------------------
-            # Execute query
-            # ------------------------------------------------
-
+            # Executa o script remotamente
+            # Escapar o script para ser transmitido via PsExec
+            $EncodedScript = [Convert]::ToBase64String(
+                [Text.Encoding]::Unicode.GetBytes($QueryScript)
+            )
+            
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
                 -Executable "powershell.exe" `
-                -Arguments "-NoProfile -ExecutionPolicy Bypass -Command `"$QueryScript`"" `
-                -TimeoutSeconds 120
+                -Arguments "-NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand $EncodedScript"
 
+            if ($Result.Success) {
+                try {
+                    $OutputTrim = $Result.Output.Trim()
+                    
+                    # Validar se há saída
+                    if ([string]::IsNullOrWhiteSpace($OutputTrim)) {
+                        Write-Log `
+                            -Level Info `
+                            -Message "No software found on $ComputerName (empty response)"
+                        return @()
+                    }
 
-            if (-not $Result.Success) {
+                    # Tentar extrair JSON válido do output (pode ter mensagens antes/depois)
+                    # Procura por [ ou { que começa o JSON
+                    $JsonStart = $OutputTrim.IndexOf('[')
+                    if ($JsonStart -eq -1) {
+                        $JsonStart = $OutputTrim.IndexOf('{')
+                    }
+                    
+                    if ($JsonStart -gt 0) {
+                        # Remove tudo antes do JSON
+                        $OutputTrim = $OutputTrim.Substring($JsonStart)
+                    }
+                    
+                    # Procura pelo último ] ou } que fecha o JSON
+                    $JsonEnd = $OutputTrim.LastIndexOf(']')
+                    $JsonEnd2 = $OutputTrim.LastIndexOf('}')
+                    $JsonEnd = [Math]::Max($JsonEnd, $JsonEnd2)
+                    
+                    if ($JsonEnd -gt 0) {
+                        # Remove tudo depois do JSON
+                        $OutputTrim = $OutputTrim.Substring(0, $JsonEnd + 1)
+                    }
 
-                throw "Remote software query failed. ExitCode: $($Result.ExitCode). Error: $($Result.Error)"
-            }
+                    # Tentar parsear JSON
+                    $InstalledApps = $OutputTrim | ConvertFrom-Json -ErrorAction Stop
 
+                    # Garantir que é sempre um array
+                    if ($InstalledApps -eq $null) {
+                        $InstalledApps = @()
+                    } elseif (-not ($InstalledApps -is [array])) {
+                        $InstalledApps = @($InstalledApps)
+                    }
 
-            # ------------------------------------------------
-            # Empty result
-            # ------------------------------------------------
+                    Write-Log `
+                        -Level Info `
+                        -Message "Found $($InstalledApps.Count) installed applications on $ComputerName"
 
-            if ([string]::IsNullOrWhiteSpace($Result.Output)) {
+                    return $InstalledApps
+                }
+                catch {
+                    Write-Log `
+                        -Level Warning `
+                        -Message "Could not parse installed software list from $ComputerName : $($_.Exception.Message). Raw output: $($Result.Output.Substring(0, [Math]::Min(100, $Result.Output.Length)))"
 
-                return [PSCustomObject]@{
-
-                    Success = $true
-
-                    ComputerName = $ComputerName
-
-                    Software = @()
-
-                    Count = 0
-
-                    Error = $null
-
-                    Timestamp = Get-Date
+                    return @()
                 }
             }
+            else {
+                Write-Log `
+                    -Level Warning `
+                    -Message "Failed to query installed software on $ComputerName. Exit code: $($Result.ExitCode). Error: $($Result.Error)"
 
-
-            # ------------------------------------------------
-            # Parse JSON
-            # ------------------------------------------------
-
-            try {
-
-                $InstalledApps = $Result.Output |
-                    ConvertFrom-Json `
-                    -ErrorAction Stop
-            }
-
-            catch {
-
-                throw "Unable to parse installed software response: $($_.Exception.Message)"
-            }
-
-
-            $InstalledApps = @($InstalledApps)
-
-
-            Write-Log `
-                -Level Info `
-                -Message "Found $($InstalledApps.Count) installed applications on $ComputerName"
-
-
-            return [PSCustomObject]@{
-
-                Success = $true
-
-                ComputerName = $ComputerName
-
-                Software = $InstalledApps
-
-                Count = $InstalledApps.Count
-
-                Error = $null
-
-                Timestamp = Get-Date
+                return @()
             }
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
                 -Message "Error retrieving installed software from $ComputerName`: $($_.Exception.Message)"
 
-
-            return [PSCustomObject]@{
-
-                Success = $false
-
-                ComputerName = $ComputerName
-
-                Software = @()
-
-                Count = 0
-
-                Error = $_.Exception.Message
-
-                Timestamp = Get-Date
-            }
+            return @()
         }
     }
 }
-
 
 # ============================================================
 # GET SOFTWARE UNINSTALL COMMAND
@@ -1299,33 +578,23 @@ $InstalledApps |
 
 <#
 .SYNOPSIS
-    Retrieves uninstall information for installed software.
-
-.DESCRIPTION
-    Searches installed applications on the remote computer.
-
-    All matching applications are returned. The function does not
-    silently select the first match.
+    Retrieves the uninstall command for a specific software.
 
 .PARAMETER ComputerName
     Name of the remote computer.
 
 .PARAMETER SoftwareName
-    Software name to search for.
-
-.EXAMPLE
-    Get-SoftwareUninstallCommand `
-        -ComputerName "PC-001" `
-        -SoftwareName "Chrome"
+    Name of the software to uninstall.
 
 .OUTPUTS
-    PSCustomObject
+    System.Object
+    Returns the uninstall command and related information.
+
+.EXAMPLE
+    Get-SoftwareUninstallCommand -ComputerName "PC-001" -SoftwareName "Google Chrome"
 #>
-
 function Get-SoftwareUninstallCommand {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -1337,123 +606,44 @@ function Get-SoftwareUninstallCommand {
     )
 
     process {
-
         try {
-
             Write-Log `
                 -Level Info `
-                -Message "Searching installed software '$SoftwareName' on $ComputerName"
+                -Message "Retrieving uninstall command for $SoftwareName on $ComputerName"
 
+            $InstalledApps = Get-InstalledSoftware -ComputerName $ComputerName
 
-            $InventoryResult = Get-InstalledSoftware `
-                -ComputerName $ComputerName
+            $Software = $InstalledApps | Where-Object {
+                $_.Name -like "*$SoftwareName*"
+            } | Select-Object -First 1
 
+            if ($Software) {
+                Write-Log `
+                    -Level Info `
+                    -Message "Found uninstall command for $($Software.Name)"
 
-            if (-not $InventoryResult.Success) {
-
-                throw $InventoryResult.Error
+                return $Software
             }
-
-
-            $Matches = @(
-                $InventoryResult.Software |
-                    Where-Object {
-                        $_.Name -like "*$SoftwareName*"
-                    }
-            )
-
-
-            if ($Matches.Count -eq 0) {
-
+            else {
                 Write-Log `
                     -Level Warning `
-                    -Message "No installed software matched '$SoftwareName' on $ComputerName"
+                    -Message "No software found matching: $SoftwareName"
 
-
-                return @()
+                return $null
             }
-
-
-            Write-Log `
-                -Level Info `
-                -Message "Found $($Matches.Count) installed software match(es) for '$SoftwareName'"
-
-
-            return $Matches
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
-                -Message "Error retrieving uninstall information: $($_.Exception.Message)"
+                -Message "Error retrieving uninstall command: $($_.Exception.Message)"
 
-            throw
+            throw $_
         }
     }
 }
 
-
 # ============================================================
-# BUILD UNINSTALL COMMAND
-# ============================================================
-
-<#
-.SYNOPSIS
-    Normalizes an uninstall command.
-
-.DESCRIPTION
-    Handles MSI uninstall commands and ensures silent execution
-    where possible.
-
-    MSI commands using /I are converted to /X.
-
-.PARAMETER UninstallCommand
-    Original uninstall command.
-
-.OUTPUTS
-    System.String
-#>
-
-function New-SoftwareUninstallCommand {
-
-    [CmdletBinding()]
-
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$UninstallCommand
-    )
-
-    $Command = $UninstallCommand.Trim()
-
-
-    if ($Command -match "(?i)\bmsiexec(?:\.exe)?\b") {
-
-        # Convert MSI install/repair switch to uninstall.
-        $Command = $Command -replace "(?i)\s/I(?=\s|\{)", " /X"
-
-
-        # Add quiet execution if not already supplied.
-        if ($Command -notmatch "(?i)(/quiet|/qn)") {
-
-            $Command += " /quiet"
-        }
-
-
-        if ($Command -notmatch "(?i)(/norestart)") {
-
-            $Command += " /norestart"
-        }
-    }
-
-
-    return $Command
-}
-
-
-# ============================================================
-# UNINSTALL REMOTE SOFTWARE
+# UNINSTALL SOFTWARE
 # ============================================================
 
 <#
@@ -1461,34 +651,27 @@ function New-SoftwareUninstallCommand {
     Uninstalls software from a remote computer.
 
 .DESCRIPTION
-    Executes the supplied uninstall command using PsExec.
-
-    This is the low-level uninstall function.
-
-    Use Uninstall-Software for the complete workflow.
+    Executes the uninstall command for a specified software on a
+    remote computer using PsExec.
 
 .PARAMETER ComputerName
     Name of the remote computer.
 
 .PARAMETER UninstallCommand
-    Command obtained from the software inventory.
+    The uninstall command to execute.
 
 .PARAMETER TimeoutSeconds
-    Maximum execution time.
-
-.EXAMPLE
-    Uninstall-RemoteSoftware `
-        -ComputerName "PC-001" `
-        -UninstallCommand "MsiExec.exe /X{GUID}"
+    Maximum execution time in seconds (default: 300).
 
 .OUTPUTS
-    PSCustomObject
+    System.Object
+    Returns uninstallation result with status and details.
+
+.EXAMPLE
+    Uninstall-RemoteSoftware -ComputerName "PC-001" -UninstallCommand "MsiExec.exe /X{GUID} /quiet /norestart"
 #>
-
 function Uninstall-RemoteSoftware {
-
     [CmdletBinding()]
-
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -1500,429 +683,76 @@ function Uninstall-RemoteSoftware {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = $DEFAULT_UNINSTALL_TIMEOUT
+        [int]$TimeoutSeconds = 300
     )
 
     process {
-
         try {
-
             Write-Log `
                 -Level Info `
                 -Message "Uninstalling software on $ComputerName"
 
+            # Se o comando for MsiExec, garantir que use /quiet e /norestart
+            $FinalCommand = $UninstallCommand
 
-            # ------------------------------------------------
-            # Normalize command
-            # ------------------------------------------------
+            if ($UninstallCommand -like "*MsiExec*" -and $UninstallCommand -notlike "*quiet*") {
+                $FinalCommand = $UninstallCommand -replace "(/X.*?)(\s|$)", "`$1 /quiet /norestart `$2"
+            }
 
-            $FinalCommand = New-SoftwareUninstallCommand `
-                -UninstallCommand $UninstallCommand
-
-
-            Write-Log `
-                -Level Info `
-                -Message "Prepared uninstall command for $ComputerName"
-
-
-            # ------------------------------------------------
-            # Execute
-            # ------------------------------------------------
-
+            # Executa o comando de desinstalação
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
                 -Executable "cmd.exe" `
                 -Arguments "/c $FinalCommand" `
                 -TimeoutSeconds $TimeoutSeconds
 
-
-            $ExitCode = $Result.ExitCode
-
-
-            # ------------------------------------------------
-            # Success handling
-            # ------------------------------------------------
-
-            $Success = (
-                $Result.Success -or
-                $ExitCode -in $SUCCESS_EXIT_CODES
-            )
-
-
-            $RebootRequired = (
-                $ExitCode -in $REBOOT_REQUIRED_EXIT_CODES
-            )
-
-
-            if ($Success) {
-
+            if ($Result.Success -or $Result.ExitCode -eq 0 -or $Result.ExitCode -eq 1605) {
                 Write-Log `
                     -Level Info `
-                    -Message "Software uninstallation completed on $ComputerName with exit code $ExitCode"
-
+                    -Message "Software uninstalled successfully on $ComputerName"
 
                 return [PSCustomObject]@{
-
-                    Success = $true
-
-                    ComputerName = $ComputerName
-
-                    UninstallCmd = $FinalCommand
-
-                    ExitCode = $ExitCode
-
-                    RebootRequired = $RebootRequired
-
-                    TimedOut = $Result.TimedOut
-
-                    Output = $Result.Output
-
-                    Error = $Result.Error
-
-                    Duration = $Result.DurationMS
-
-                    Timestamp = Get-Date
+                    Success        = $true
+                    ComputerName   = $ComputerName
+                    UninstallCmd   = $FinalCommand
+                    ExitCode       = $Result.ExitCode
+                    Output         = $Result.Output
+                    Duration       = $Result.DurationMS
+                    Timestamp      = Get-Date
                 }
             }
+            else {
+                Write-Log `
+                    -Level Error `
+                    -Message "Uninstallation failed on $ComputerName with exit code: $($Result.ExitCode)"
 
-
-            # ------------------------------------------------
-            # Failure
-            # ------------------------------------------------
-
-            Write-Log `
-                -Level Error `
-                -Message "Uninstallation failed on $ComputerName with exit code: $ExitCode"
-
-
-            return [PSCustomObject]@{
-
-                Success = $false
-
-                ComputerName = $ComputerName
-
-                UninstallCmd = $FinalCommand
-
-                ExitCode = $ExitCode
-
-                RebootRequired = $false
-
-                TimedOut = $Result.TimedOut
-
-                Output = $Result.Output
-
-                Error = $Result.Error
-
-                Duration = $Result.DurationMS
-
-                Timestamp = Get-Date
+                return [PSCustomObject]@{
+                    Success        = $false
+                    ComputerName   = $ComputerName
+                    UninstallCmd   = $FinalCommand
+                    ExitCode       = $Result.ExitCode
+                    Error          = $Result.Error
+                    Output         = $Result.Output
+                    Duration       = $Result.DurationMS
+                    Timestamp      = Get-Date
+                }
             }
         }
-
         catch {
-
             Write-Log `
                 -Level Error `
                 -Message "Error uninstalling software on $ComputerName`: $($_.Exception.Message)"
 
-
             return [PSCustomObject]@{
-
-                Success = $false
-
-                ComputerName = $ComputerName
-
-                UninstallCmd = $UninstallCommand
-
-                ExitCode = $null
-
-                RebootRequired = $false
-
-                TimedOut = $false
-
-                Output = $null
-
-                Error = $_.Exception.Message
-
-                Duration = $null
-
-                Timestamp = Get-Date
+                Success        = $false
+                ComputerName   = $ComputerName
+                UninstallCmd   = $UninstallCommand
+                Error          = $_.Exception.Message
+                Timestamp      = Get-Date
             }
         }
     }
 }
-
-
-# ============================================================
-# UNINSTALL WORKFLOW RESULT HELPER
-# ============================================================
-
-<#
-.SYNOPSIS
-    Builds a consistently-shaped result object for Uninstall-Software.
-
-.DESCRIPTION
-    Internal helper ensuring every return path of Uninstall-Software
-    exposes the same set of properties, regardless of which step of
-    the workflow produced the result.
-
-.OUTPUTS
-    PSCustomObject
-#>
-
-function New-UninstallWorkflowResult {
-
-    [CmdletBinding()]
-
-    param(
-        [bool]$Success = $false,
-        [bool]$RequiresSelection = $false,
-        [string]$ComputerName,
-        [string]$SoftwareName,
-        $Software = @(),
-        [string]$UninstallCommand = $null,
-        $ExitCode = $null,
-        [bool]$RebootRequired = $false,
-        [bool]$TimedOut = $false,
-        $Output = $null,
-        [string]$Error = $null,
-        $Duration = $null,
-        $WorkflowDuration = $null
-    )
-
-    [PSCustomObject]@{
-
-        Success = $Success
-        RequiresSelection = $RequiresSelection
-        ComputerName = $ComputerName
-        SoftwareName = $SoftwareName
-        Software = $Software
-        UninstallCommand = $UninstallCommand
-        ExitCode = $ExitCode
-        RebootRequired = $RebootRequired
-        TimedOut = $TimedOut
-        Output = $Output
-        Error = $Error
-        Duration = $Duration
-        WorkflowDuration = $WorkflowDuration
-        Timestamp = Get-Date
-    }
-}
-
-
-# ============================================================
-# UNINSTALL SOFTWARE WORKFLOW
-# ============================================================
-
-<#
-.SYNOPSIS
-    Executes the complete software uninstallation workflow.
-
-.DESCRIPTION
-    Performs:
-
-        1. Computer validation
-        2. Software inventory
-        3. Software search
-        4. Selection detection
-        5. Uninstall command preparation
-        6. Remote execution
-        7. Consolidated result
-
-    If multiple matches are found, the workflow returns
-    RequiresSelection instead of silently uninstalling the
-    first result.
-
-.PARAMETER ComputerName
-    Name of the remote computer.
-
-.PARAMETER SoftwareName
-    Name of the software to uninstall.
-
-.PARAMETER TimeoutSeconds
-    Maximum uninstall time.
-
-.EXAMPLE
-    Uninstall-Software `
-        -ComputerName "PC-001" `
-        -SoftwareName "Google Chrome"
-
-.OUTPUTS
-    PSCustomObject
-#>
-
-function Uninstall-Software {
-
-    [CmdletBinding()]
-
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$ComputerName,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$SoftwareName,
-
-        [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = $DEFAULT_UNINSTALL_TIMEOUT
-    )
-
-    process {
-
-        $WorkflowStart = Get-Date
-
-        try {
-
-            Write-Log `
-                -Level Info `
-                -Message "Starting software uninstallation workflow: $SoftwareName -> $ComputerName"
-
-
-            # ------------------------------------------------
-            # Check computer
-            # ------------------------------------------------
-
-            if (-not (Test-ComputerReachable -ComputerName $ComputerName)) {
-
-                throw "Computer is not reachable: $ComputerName"
-            }
-
-
-            # ------------------------------------------------
-            # Search installed software
-            # ------------------------------------------------
-
-            $Matches = @(
-                Get-SoftwareUninstallCommand `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName
-            )
-
-
-            if ($Matches.Count -eq 0) {
-
-                return New-UninstallWorkflowResult `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName `
-                    -Error "No installed software found matching: $SoftwareName" `
-                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-            }
-
-
-            # ------------------------------------------------
-            # Multiple matches
-            # ------------------------------------------------
-
-            if ($Matches.Count -gt 1) {
-
-                Write-Log `
-                    -Level Warning `
-                    -Message "Multiple installed software matches found for $SoftwareName. Selection required."
-
-
-                return New-UninstallWorkflowResult `
-                    -RequiresSelection $true `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName `
-                    -Software $Matches `
-                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-            }
-
-
-            # ------------------------------------------------
-            # Single match
-            # ------------------------------------------------
-
-            $Software = $Matches[0]
-
-
-            # ------------------------------------------------
-            # Validate uninstall command
-            # ------------------------------------------------
-
-            if ([string]::IsNullOrWhiteSpace(
-                $Software.UninstallString
-            ) -and
-                [string]::IsNullOrWhiteSpace(
-                    $Software.QuietUninstallString
-                )) {
-
-                return New-UninstallWorkflowResult `
-                    -ComputerName $ComputerName `
-                    -SoftwareName $SoftwareName `
-                    -Software $Software `
-                    -Error "No uninstall command is registered for $($Software.Name)" `
-                    -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-            }
-
-
-            # ------------------------------------------------
-            # Prefer QuietUninstallString
-            # ------------------------------------------------
-
-            $RawCommand = if (
-                -not [string]::IsNullOrWhiteSpace(
-                    $Software.QuietUninstallString
-                )
-            ) {
-                $Software.QuietUninstallString
-            }
-            else {
-                $Software.UninstallString
-            }
-
-
-            $FinalCommand = New-SoftwareUninstallCommand `
-                -UninstallCommand $RawCommand
-
-
-            # ------------------------------------------------
-            # Execute uninstall
-            # ------------------------------------------------
-
-            $UninstallResult = Uninstall-RemoteSoftware `
-                -ComputerName $ComputerName `
-                -UninstallCommand $FinalCommand `
-                -TimeoutSeconds $TimeoutSeconds
-
-
-            # ------------------------------------------------
-            # Consolidated result
-            # ------------------------------------------------
-
-            return New-UninstallWorkflowResult `
-                -Success $UninstallResult.Success `
-                -ComputerName $ComputerName `
-                -SoftwareName $SoftwareName `
-                -Software $Software `
-                -UninstallCommand $UninstallResult.UninstallCmd `
-                -ExitCode $UninstallResult.ExitCode `
-                -RebootRequired $UninstallResult.RebootRequired `
-                -TimedOut $UninstallResult.TimedOut `
-                -Output $UninstallResult.Output `
-                -Error $UninstallResult.Error `
-                -Duration $UninstallResult.Duration `
-                -WorkflowDuration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-        }
-
-        catch {
-
-            Write-Log `
-                -Level Error `
-                -Message "Software uninstallation workflow failed: $($_.Exception.Message)"
-
-
-            return New-UninstallWorkflowResult `
-                -ComputerName $ComputerName `
-                -SoftwareName $SoftwareName `
-                -Error $_.Exception.Message `
-                -Duration ((Get-Date) - $WorkflowStart).TotalMilliseconds
-        }
-    }
-}
-
 
 # ============================================================
 # EXPORT MODULE MEMBERS
@@ -1932,13 +762,8 @@ Export-ModuleMember -Function @(
     'Get-SoftwareRepository'
     'Find-SoftwareInstaller'
     'Copy-SoftwareToRemote'
-
     'Install-RemoteSoftware'
-    'Install-Software'
-
     'Get-InstalledSoftware'
     'Get-SoftwareUninstallCommand'
-
     'Uninstall-RemoteSoftware'
-    'Uninstall-Software'
 )
