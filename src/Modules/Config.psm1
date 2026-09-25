@@ -1,4 +1,4 @@
-<#
+﻿<#
     Module: Config.psm1
 
     Responsável por carregar e validar

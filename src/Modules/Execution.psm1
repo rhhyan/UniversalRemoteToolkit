@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Builds the argument string used to execute PsExec.
 
@@ -226,16 +226,30 @@ function Invoke-PsExecProcess {
 
             if ($TimedOut) {
                 try {
-                    $Process.Kill()
-                    $Process.WaitForExit()
+                    # Kill(bool) (.NET Core / PS 7) also ends child processes.
+                    if ($Process.GetType().GetMethod('Kill', [type[]]@([bool]))) {
+                        $Process.Kill($true)
+                    }
+                    else {
+                        $Process.Kill()
+                    }
+
+                    $null = $Process.WaitForExit(5000)
                 }
                 catch {
                     # The process may have already exited.
                 }
             }
 
-            $Output = $OutputTask.Result
-            $ErrorOutput = $ErrorTask.Result
+            # A child process that inherited the pipes can keep them open
+            # after PsExec exits; do not let that block past the timeout.
+            $null = [System.Threading.Tasks.Task]::WaitAll(
+                [System.Threading.Tasks.Task[]]@($OutputTask, $ErrorTask),
+                5000
+            )
+
+            $Output = if ($OutputTask.IsCompleted) { $OutputTask.Result } else { "" }
+            $ErrorOutput = if ($ErrorTask.IsCompleted) { $ErrorTask.Result } else { "" }
 
             $ExitCode = if ($TimedOut) {
                 $null

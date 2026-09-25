@@ -56,6 +56,7 @@ foreach ($Module in $ModulesToLoad) {
         Import-Module `
             -Name $ModuleFile `
             -Force `
+            -DisableNameChecking `
             -ErrorAction Stop
 
         Write-Host "[✓] $Module loaded" -ForegroundColor Green
@@ -992,7 +993,8 @@ function Invoke-OptimizationMenu {
             5 { 'DisableServices' }
         }
 
-        Show-Section -Title $OptimizationMenu[$Choice]
+        # [object] força a busca pela chave; com int, [ordered][n] usa a posição
+        Show-Section -Title $OptimizationMenu[[object]$Choice]
 
         $Computers = Read-TargetComputers
 
@@ -1078,7 +1080,8 @@ function Invoke-ActivationMenu {
             3 { 'Status' }
         }
 
-        Show-Section -Title $ActivationMenu[$Choice]
+        # [object] força a busca pela chave; com int, [ordered][n] usa a posição
+        Show-Section -Title $ActivationMenu[[object]$Choice]
 
         $Computers = Read-TargetComputers
 

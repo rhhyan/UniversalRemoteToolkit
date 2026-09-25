@@ -1,4 +1,4 @@
-<#
+﻿<#
     Module: Logger.psm1
 
     start logs URT

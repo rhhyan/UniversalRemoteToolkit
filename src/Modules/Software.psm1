@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # Universal Remote Toolkit
 # Module: Software Management
 # Description: Universal software installation and uninstallation
@@ -528,12 +528,10 @@ try {
                     }
 
                     # Tentar extrair JSON válido do output (pode ter mensagens antes/depois)
-                    # Procura por [ ou { que começa o JSON
-                    $JsonStart = $OutputTrim.IndexOf('[')
-                    if ($JsonStart -eq -1) {
-                        $JsonStart = $OutputTrim.IndexOf('{')
-                    }
-                    
+                    # Procura o primeiro [ ou { (um único programa vira um objeto
+                    # JSON, e o nome dele pode conter colchetes)
+                    $JsonStart = $OutputTrim.IndexOfAny([char[]]'[{')
+
                     if ($JsonStart -gt 0) {
                         # Remove tudo antes do JSON
                         $OutputTrim = $OutputTrim.Substring($JsonStart)
@@ -553,7 +551,7 @@ try {
                     $InstalledApps = $OutputTrim | ConvertFrom-Json -ErrorAction Stop
 
                     # Garantir que é sempre um array
-                    if ($InstalledApps -eq $null) {
+                    if ($null -eq $InstalledApps) {
                         $InstalledApps = @()
                     } elseif (-not ($InstalledApps -is [array])) {
                         $InstalledApps = @($InstalledApps)
