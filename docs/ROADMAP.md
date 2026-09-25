@@ -23,15 +23,15 @@
 
 ## Sprint 3 — Console Interface
 
-- [ ] Build ConsoleUI foundation
-- [ ] Create main menu
-- [ ] Add interactive computer selection
-- [ ] Add command execution interface
-- [ ] Add execution status display
-- [ ] Add formatted operation results
-- [ ] Integrate ConsoleUI with Logger
-- [ ] Integrate ConsoleUI with Connection
-- [ ] Integrate ConsoleUI with Execution
+- [x] Build ConsoleUI foundation
+- [x] Create main menu
+- [x] Add interactive computer selection
+- [x] Add command execution interface
+- [x] Add execution status display
+- [x] Add formatted operation results
+- [x] Integrate ConsoleUI with Logger
+- [x] Integrate ConsoleUI with Connection
+- [x] Integrate ConsoleUI with Execution
 
 ## Sprint 4 — Software Management
 
@@ -44,11 +44,25 @@
 - [ ] InstallShield silent uninstall (response file support)
 - [ ] Per-user uninstall in the logged-on user's context
 
+## Sprint 5 — Maintenance Scripts
+
+- [x] Scripts menu with remote script catalog
+- [x] Run scripts on multiple computers with per-computer summary
+- [x] Windows optimization (profile cleanup + SFC, debloat, DISM, visual effects, services)
+- [x] Windows/Office KMS activation and status check
+
+## Sprint 6 — Quality
+
+- [x] Automated tests with Pester (all modules, remote calls mocked)
+- [x] End-to-end smoke test of the main menu
+- [x] Syntax and encoding checks (Windows PowerShell 5.1 compatibility)
+- [ ] Run the test suite in CI (GitHub Actions)
+- [ ] Validate remote workflows on a real Windows test machine
+
 ## Future
 
 - [ ] Driver management
 - [ ] Batch operations
 - [ ] Improved error handling
-- [ ] Automated tests
 - [ ] Configuration profiles
 - [ ] Advanced logging and reporting

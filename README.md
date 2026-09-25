@@ -11,13 +11,19 @@ The Universal Remote Toolkit is currently under active development.
 - [x] Connection module
 - [x] Execution module
 - [x] Comment-based PowerShell documentation
+- [x] Console UI
+- [x] Remote command execution workflow
+- [x] Software management (install, inventory, universal uninstaller)
+- [x] Maintenance scripts (Windows optimization, KMS activation)
 - [x] Automated testing (Pester)
 
 ### In Progress
 
-- [ ] Console UI
-- [ ] Remote command execution workflow
-- [ ] Software management features
+- [ ] Run the test suite in CI (GitHub Actions)
+- [ ] Validate remote workflows on a real Windows test machine
+- [ ] InstallShield silent uninstall and per-user uninstall
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full roadmap.
 
 ## Running the Tests
 

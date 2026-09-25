@@ -16,9 +16,15 @@ All notable changes to this project will be documented here.
 - `Get-ApplicationRoot` retornava a pasta `src` em vez da raiz
 - `Show-ExecutionResult` vazava a entrada do usuário para o pipeline
 - Menu exibia "0 - Exit" no topo
+- Menus de Otimização/Ativação exibiam o título da opção errada (ex.: "1" mostrava "debloat", "3" mostrava "Voltar"): `[ordered]` indexado por inteiro usa a posição, não a chave
+- Timeout do PsExec não era respeitado quando um processo filho mantinha o pipe de saída aberto; agora a árvore de processos é encerrada e a leitura tem espera limitada
+- `Get-InstalledSoftware` retornava lista vazia quando havia um único programa com colchetes no nome (ex.: `Driver [x64]`)
+- Acentos corrompidos no Windows PowerShell 5.1 (ex.: "InvÃ¡lida"): módulos com caracteres não ASCII agora são salvos em UTF-8 com BOM
+- Aviso "unapproved verbs" exibido a cada inicialização
 
 ### Added
 
+- Testes automatizados com Pester (`Tests/`, 141 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
 - Menu Scripts (`Scripts.psm1`): execução remota de scripts de manutenção em uma ou várias máquinas, com resumo por computador
   - Otimização do Windows: limpeza de perfis + SFC, debloat, DISM, efeitos visuais e desativação de serviços
   - Ativação Windows/Office via KMS (`Scripts.KmsHost` no Settings.json) e consulta de status
