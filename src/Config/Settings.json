@@ -24,5 +24,8 @@
         "DefaultInstallTimeout": 300,
         "DefaultUninstallTimeout": 300,
         "UninstallVerifyTimeout": 60
+    },
+    "Scripts": {
+        "KmsHost": "kmspw01.oi.corp.net"
     }
 }

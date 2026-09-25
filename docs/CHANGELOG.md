@@ -19,6 +19,9 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Menu Scripts (`Scripts.psm1`): execução remota de scripts de manutenção em uma ou várias máquinas, com resumo por computador
+  - Otimização do Windows: limpeza de perfis + SFC, debloat, DISM, efeitos visuais e desativação de serviços
+  - Ativação Windows/Office via KMS (`Scripts.KmsHost` no Settings.json) e consulta de status
 - Desinstalador universal (`Resolve-UninstallCommand`): detecta MSI, Inno Setup, NSIS, Chromium, Squirrel e InstallShield e aplica o modo silencioso de cada um; para desinstaladores desconhecidos, pede os argumentos silenciosos
 - Verificação pós-desinstalação: aguarda a chave do programa sumir do registro (`Software.UninstallVerifyTimeout`), cobrindo desinstaladores que retornam antes de terminar (NSIS, Squirrel) e falsos sucessos (ex.: MSI 1605)
 - Listagem inclui instalações por usuário (perfis carregados em `HKEY_USERS`), com escopo, fabricante e ProductCode; ignora componentes de sistema e atualizações

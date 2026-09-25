@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # Universal Remote Toolkit
 # Main Application Entry Point
 # ============================================================
@@ -40,6 +40,7 @@ $ModulesToLoad = @(
     'ConsoleUI.psm1'
     'Utils.psm1'
     'Software.psm1'
+    'Scripts.psm1'
 )
 
 foreach ($Module in $ModulesToLoad) {
@@ -130,6 +131,7 @@ $MainMenu = [ordered]@{
     1 = "Remote Execution"
     2 = "Software Management"
     3 = "Settings"
+    4 = "Scripts"
     0 = "Exit"
 }
 
@@ -152,6 +154,28 @@ $SettingsMenu = [ordered]@{
     2 = "Preferences"
     3 = "About"
     0 = "Back to main menu"
+}
+
+$ScriptsMenu = [ordered]@{
+    1 = "Otimizacao do Windows"
+    2 = "Ativar Windows/Office"
+    0 = "Voltar ao menu principal"
+}
+
+$OptimizationMenu = [ordered]@{
+    1 = "Remover perfis BC, XTR, XTC, TEMP e TH (+ chaves de registro) + SFC"
+    2 = "Remover apps pre-instalados (debloat)"
+    3 = "Reparo do Windows com DISM (quando o SFC nao resolve)"
+    4 = "Ajustar efeitos visuais (melhor desempenho)"
+    5 = "Desativar Spooler, SysMain, WSearch (avalie a necessidade)"
+    0 = "Voltar"
+}
+
+$ActivationMenu = [ordered]@{
+    1 = "Ativar Microsoft Office (32/64 bits detectado automaticamente)"
+    2 = "Ativar Windows"
+    3 = "Verificar status de ativacao"
+    0 = "Voltar"
 }
 
 # ============================================================
@@ -849,6 +873,268 @@ function Invoke-SettingsMenu {
 }
 
 # ============================================================
+# SCRIPTS MENU
+# ============================================================
+
+function Read-TargetComputers {
+
+    [CmdletBinding()]
+    param()
+
+    $InputText = Read-UserInput -Prompt "Computador(es) (separe por virgula ou espaco)"
+
+    return @(
+        $InputText -split '[,; ]+' |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.Trim().TrimStart('\') } |
+            Select-Object -Unique
+    )
+}
+
+function Invoke-ScriptOnComputers {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$Computers,
+
+        [Parameter(Mandatory)]
+        [string]$Label,
+
+        # Recebe o nome do computador e retorna o resultado do Scripts.psm1
+        [Parameter(Mandatory)]
+        [scriptblock]$ScriptBlock
+    )
+
+    Write-Host ""
+
+    $Results = foreach ($Computer in $Computers) {
+
+        Write-Status -Status Running -Message "$Computer - $Label..."
+
+        $Result = & $ScriptBlock $Computer
+
+        $Status = switch ($Result.Status) {
+            'Success' { 'Success' }
+            'Partial' { 'Warning' }
+            default   { 'Error' }
+        }
+
+        Write-Status -Status $Status -Message "$Computer - $($Result.Status)"
+
+        $Result
+    }
+
+    Show-ScriptResults -Results @($Results)
+}
+
+function Show-ScriptResults {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Results
+    )
+
+    foreach ($Result in $Results) {
+
+        Show-Section -Title "$($Result.Computer) - $($Result.Status)"
+
+        if ($Result.Output) {
+            $Result.Output.TrimEnd() -split "\r?\n" | ForEach-Object {
+                Write-Host "    $_" -ForegroundColor Gray
+            }
+        }
+
+        if ($Result.Error -and -not $Result.Success) {
+            Write-Status -Status Error -Message $Result.Error
+        }
+    }
+
+    $Ok = @($Results | Where-Object Success).Count
+
+    $Summary = $Results | ForEach-Object {
+        "{0,-20} {1,-9} {2,-6} {3}" -f $_.Computer, $_.Status, "$($_.ExitCode)", ('{0:mm\:ss}' -f [timespan]::FromMilliseconds([double]$_.DurationMS))
+    }
+
+    Show-ExecutionResult `
+        -Status $(if ($Ok -eq $Results.Count) { 'Success' } elseif ($Ok -gt 0) { 'Warning' } else { 'Error' }) `
+        -Message "$Ok de $($Results.Count) computador(es) concluidos" `
+        -Details (@("{0,-20} {1,-9} {2,-6} {3}" -f 'COMPUTADOR', 'STATUS', 'EXIT', 'DURACAO') + @($Summary) -join "`n")
+}
+
+function Invoke-OptimizationMenu {
+
+    [CmdletBinding()]
+    param()
+
+    while ($true) {
+
+        Show-Screen -Subtitle "Scripts > Otimizacao do Windows"
+
+        $Choice = Read-MenuChoice `
+            -Menu $OptimizationMenu `
+            -Description "Selecione a otimizacao:"
+
+        Write-Log `
+            -Level Info `
+            -Message "OptimizationMenu: option $Choice selected"
+
+        if ($Choice -eq 0) {
+            return
+        }
+
+        $Action = switch ($Choice) {
+            1 { 'CleanProfiles' }
+            2 { 'Debloat' }
+            3 { 'RepairImage' }
+            4 { 'VisualEffects' }
+            5 { 'DisableServices' }
+        }
+
+        Show-Section -Title $OptimizationMenu[$Choice]
+
+        $Computers = Read-TargetComputers
+
+        if ($Computers.Count -eq 0) {
+            Write-Log `
+                -Level Info `
+                -Message "Optimization cancelled: no computer informed"
+            continue
+        }
+
+        $Params = @{ Action = $Action }
+
+        if ($Action -eq 'CleanProfiles') {
+
+            $Keep = @((Read-UserInput -Prompt "Matriculas TH a MANTER (Enter = nenhuma)") -split '[,; ]+' | Where-Object { $_ })
+
+            Write-Host ""
+            Show-Properties -Properties ([ordered]@{
+                'Remover'   = "Perfis BC*, XTR*, XTC*, TEMP* e TH*"
+                'Excecoes'  = $(if ($Keep) { $Keep -join ', ' } else { '(nenhuma)' })
+                'Em uso'    = "Perfis de usuarios logados sao ignorados"
+            })
+
+            if (-not (Read-Confirmation -Prompt "Confirma a exclusao em $($Computers -join ', ')?")) {
+                Write-Log `
+                    -Level Info `
+                    -Message "CleanProfiles cancelled by user"
+                continue
+            }
+
+            $Params.KeepProfiles = $Keep
+
+            if (-not (Read-Confirmation -Prompt "Executar SFC /SCANNOW ao final? (~15 min)")) {
+                $Params.SkipSfc = $true
+            }
+        }
+
+        if ($Action -eq 'DisableServices') {
+
+            Write-Host ""
+            Write-Status -Status Warning -Message "O Spooler desativado impede IMPRESSAO na maquina."
+            Write-Status -Status Info -Message "Tambem desativa WSearch (indexacao) e SysMain."
+
+            if (-not (Read-Confirmation -Prompt "Deseja continuar?")) {
+                Write-Log `
+                    -Level Info `
+                    -Message "DisableServices cancelled by user"
+                continue
+            }
+        }
+
+        Invoke-ScriptOnComputers `
+            -Computers $Computers `
+            -Label $Action `
+            -ScriptBlock { param($Computer) Invoke-WindowsOptimization -ComputerName $Computer @Params }.GetNewClosure()
+    }
+}
+
+function Invoke-ActivationMenu {
+
+    [CmdletBinding()]
+    param()
+
+    while ($true) {
+
+        Show-Screen -Subtitle "Scripts > Ativar Windows/Office"
+
+        $Choice = Read-MenuChoice `
+            -Menu $ActivationMenu `
+            -Description "Selecione a ativacao:"
+
+        Write-Log `
+            -Level Info `
+            -Message "ActivationMenu: option $Choice selected"
+
+        if ($Choice -eq 0) {
+            return
+        }
+
+        $Target = switch ($Choice) {
+            1 { 'Office' }
+            2 { 'Windows' }
+            3 { 'Status' }
+        }
+
+        Show-Section -Title $ActivationMenu[$Choice]
+
+        $Computers = Read-TargetComputers
+
+        if ($Computers.Count -eq 0) {
+            Write-Log `
+                -Level Info `
+                -Message "Activation cancelled: no computer informed"
+            continue
+        }
+
+        Invoke-ScriptOnComputers `
+            -Computers $Computers `
+            -Label $Target `
+            -ScriptBlock { param($Computer) Invoke-LicenseActivation -ComputerName $Computer -Target $Target }.GetNewClosure()
+    }
+}
+
+function Invoke-ScriptsMenu {
+
+    [CmdletBinding()]
+    param()
+
+    while ($true) {
+
+        Show-Screen -Subtitle "Scripts"
+
+        $Choice = Read-MenuChoice `
+            -Menu $ScriptsMenu `
+            -Description "Selecione um script:"
+
+        Write-Log `
+            -Level Info `
+            -Message "ScriptsMenu: option $Choice selected"
+
+        switch ($Choice) {
+
+            1 {
+                Invoke-OptimizationMenu
+            }
+
+            2 {
+                Invoke-ActivationMenu
+            }
+
+            0 {
+                Write-Log `
+                    -Level Info `
+                    -Message "ScriptsMenu: returning to main menu"
+
+                return
+            }
+        }
+    }
+}
+
+# ============================================================
 # MAIN MENU
 # ============================================================
 
@@ -881,6 +1167,10 @@ function Start-UniversalRemoteToolkit {
 
             3 {
                 Invoke-SettingsMenu
+            }
+
+            4 {
+                Invoke-ScriptsMenu
             }
 
             0 {
