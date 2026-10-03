@@ -72,6 +72,51 @@ Describe 'Get-SoftwareRepository / Find-SoftwareInstaller' {
     }
 }
 
+Describe 'Copy-SoftwareToRemote' {
+
+    BeforeAll {
+        $script:Installer = Join-Path $TestDrive 'setup.msi'
+        Set-Content -Path $Installer -Value 'x'
+    }
+
+    BeforeEach {
+        Mock -ModuleName Execution Test-ComputerReachable { $true }
+        # Só os caminhos UNC são simulados; o instalador de origem é real
+        Mock -ModuleName Execution Test-Path { Microsoft.PowerShell.Management\Test-Path @PesterBoundParameters }
+        Mock -ModuleName Execution Test-Path { $true } -ParameterFilter { $LiteralPath -like '\\*' }
+        Mock -ModuleName Execution Copy-Item { }
+    }
+
+    It 'mantém RemotePath (UNC) e LocalPathOnly (caminho na máquina remota)' {
+        $Result = Copy-SoftwareToRemote -ComputerName '\\PC-001' -InstallerPath $Installer
+
+        $Result.Success | Should -BeTrue
+        $Result.FileName | Should -Be 'setup.msi'
+        $Result.LocalPath | Should -Be $Installer
+        $Result.RemotePath | Should -Be '\\PC-001\C$\script_temp\setup.msi'
+        $Result.LocalPathOnly | Should -Be 'C:\script_temp\setup.msi'
+    }
+
+    It 'faz o ping antes: máquina offline falha sem tentar copiar' {
+        Mock -ModuleName Execution Test-ComputerReachable { $false }
+
+        $Result = Copy-SoftwareToRemote -ComputerName 'PC' -InstallerPath $Installer
+
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -Match 'not reachable'
+        $Result.RemotePath | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Execution Copy-Item -Times 0
+    }
+
+    It 'instalador inexistente mantém a mensagem de antes' {
+        $Result = Copy-SoftwareToRemote -ComputerName 'PC' -InstallerPath (Join-Path $TestDrive 'nada.msi')
+
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -BeLike 'Installer file not found: *nada.msi'
+        Should -Invoke -ModuleName Execution Test-ComputerReachable -Times 0
+    }
+}
+
 Describe 'Install-RemoteSoftware' {
 
     BeforeEach {

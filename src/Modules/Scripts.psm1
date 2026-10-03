@@ -87,42 +87,28 @@ function Copy-ScriptToRemote {
     )
 
     process {
-        try {
-            if (-not (Test-Path -Path $ScriptPath -PathType Leaf)) {
-                throw "Script not found: $ScriptPath"
-            }
+        if (-not (Test-Path -Path $ScriptPath -PathType Leaf)) {
+            $Message = "Script not found: $ScriptPath"
 
-            # C:\script_temp -> \\PC\C$\script_temp
-            $HostName   = $ComputerName.TrimStart('\')
-            $FileName   = Split-Path -Leaf $ScriptPath
-            $RemoteDir  = "\\$HostName\$($REMOTE_TEMP_PATH.Substring(0, 1))`$\$($REMOTE_TEMP_PATH.Substring(3))"
-            $RemoteFile = Join-Path $RemoteDir $FileName
+            Write-Log -Level Error -Message "Error copying script to $ComputerName`: $Message"
 
-            if (-not (Test-Path -Path $RemoteDir)) {
-                New-Item -ItemType Directory -Path $RemoteDir -Force -ErrorAction Stop | Out-Null
-                Write-Log -Level Info -Message "Created remote directory: $RemoteDir"
-            }
-
-            Copy-Item -Path $ScriptPath -Destination $RemoteFile -Force -ErrorAction Stop
-
-            Write-Log -Level Info -Message "Script copied to $RemoteFile"
-
-            [PSCustomObject]@{
-                Success    = $true
-                RemoteUnc  = $RemoteFile
-                RemotePath = Join-Path $REMOTE_TEMP_PATH $FileName
-                Error      = $null
-            }
+            $Copy = [PSCustomObject]@{ Success = $false; Reachable = $null; Error = $Message }
         }
-        catch {
-            Write-Log -Level Error -Message "Error copying script to $ComputerName`: $($_.Exception.Message)"
+        else {
+            # Faz o ping antes da cópia: máquina offline falha rápido
+            $Copy = Copy-FileToRemote `
+                -ComputerName $ComputerName `
+                -SourcePath $ScriptPath `
+                -DestinationDirectory $REMOTE_TEMP_PATH
+        }
 
-            [PSCustomObject]@{
-                Success    = $false
-                RemoteUnc  = $null
-                RemotePath = $null
-                Error      = $_.Exception.Message
-            }
+        # RemoteUnc = \\PC\C$\..., RemotePath = caminho na máquina remota
+        [PSCustomObject]@{
+            Success    = $Copy.Success
+            Reachable  = $Copy.Reachable
+            RemoteUnc  = $Copy.UncPath
+            RemotePath = $Copy.RemotePath
+            Error      = $Copy.Error
         }
     }
 }
@@ -180,15 +166,17 @@ function Invoke-RemoteToolkitScript {
 
             Write-Log -Level Info -Message "Running script '$ScriptName' ($Arguments) on $ComputerName"
 
-            if (-not (Test-ComputerReachable -ComputerName $ComputerName)) {
-                throw "Computer '$ComputerName' is not reachable."
-            }
-
+            # A cópia verifica se o computador responde antes de copiar
             $Copy = Copy-ScriptToRemote `
                 -ComputerName $ComputerName `
                 -ScriptPath (Join-Path $SCRIPTS_LOCAL_PATH $Entry.File)
 
             if (-not $Copy.Success) {
+                # Mesma mensagem de antes para máquina inacessível
+                if ($Copy.Reachable -eq $false) {
+                    throw $Copy.Error
+                }
+
                 throw "Copy failed: $($Copy.Error)"
             }
 

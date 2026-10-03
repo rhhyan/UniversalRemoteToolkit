@@ -78,6 +78,24 @@ Describe 'Utils' {
     It 'Test-IsAdministrator retorna booleano' {
         Test-IsAdministrator | Should -BeOfType [bool]
     }
+
+    It 'ConvertTo-AdminSharePath: <Computer> + <Path> -> <Expected>' -ForEach @(
+        @{ Computer = 'PC-001';   Path = 'C:\script_temp';  Expected = '\\PC-001\C$\script_temp' }
+        @{ Computer = '\\PC-001'; Path = 'C:\script_temp';  Expected = '\\PC-001\C$\script_temp' }
+        @{ Computer = 'PC-001';   Path = 'd:\apps\temp\';   Expected = '\\PC-001\D$\apps\temp' }
+        @{ Computer = 'PC-001';   Path = 'C:\';             Expected = '\\PC-001\C$' }
+        @{ Computer = 'PC-001';   Path = 'C:';              Expected = '\\PC-001\C$' }
+    ) {
+        ConvertTo-AdminSharePath -ComputerName $Computer -Path $Path | Should -Be $Expected
+    }
+
+    It 'ConvertTo-AdminSharePath rejeita <Case>' -ForEach @(
+        @{ Case = 'caminho relativo';     Computer = 'PC'; Path = 'script_temp' }
+        @{ Case = 'caminho UNC';          Computer = 'PC'; Path = '\\srv\share' }
+        @{ Case = 'computador só com \\'; Computer = '\\'; Path = 'C:\x' }
+    ) {
+        { ConvertTo-AdminSharePath -ComputerName $Computer -Path $Path } | Should -Throw
+    }
 }
 
 Describe 'Logger' {

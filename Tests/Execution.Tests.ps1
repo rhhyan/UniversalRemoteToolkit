@@ -155,3 +155,80 @@ Describe 'Invoke-PsExecCommand' {
         $Result.Success | Should -BeFalse
     }
 }
+
+Describe 'Copy-FileToRemote' {
+
+    BeforeAll {
+        $script:Source = Join-Path $TestDrive 'setup.msi'
+        Set-Content -Path $Source -Value 'x'
+    }
+
+    BeforeEach {
+        Mock -ModuleName Execution Test-ComputerReachable { $true }
+        # Só os caminhos UNC são simulados; o arquivo de origem é real
+        Mock -ModuleName Execution Test-Path { Microsoft.PowerShell.Management\Test-Path @PesterBoundParameters }
+        Mock -ModuleName Execution Test-Path { $false } -ParameterFilter { $LiteralPath -like '\\*' }
+        Mock -ModuleName Execution New-Item { }
+        Mock -ModuleName Execution Copy-Item { }
+    }
+
+    It 'cria a pasta pelo C$, copia e retorna os dois caminhos' {
+        $Result = Copy-FileToRemote -ComputerName '\\PC-001' -SourcePath $Source -DestinationDirectory 'C:\script_temp\'
+
+        $Result.Success | Should -BeTrue
+        $Result.Reachable | Should -BeTrue
+        $Result.FileName | Should -Be 'setup.msi'
+        $Result.UncPath | Should -Be '\\PC-001\C$\script_temp\setup.msi'
+        $Result.RemotePath | Should -Be 'C:\script_temp\setup.msi'
+
+        Should -Invoke -ModuleName Execution New-Item -Times 1 -ParameterFilter { $Path -eq '\\PC-001\C$\script_temp' }
+        Should -Invoke -ModuleName Execution Copy-Item -Times 1 -ParameterFilter {
+            $LiteralPath -eq $Source -and $Destination -eq '\\PC-001\C$\script_temp\setup.msi'
+        }
+    }
+
+    It 'não recria a pasta que já existe' {
+        Mock -ModuleName Execution Test-Path { $true } -ParameterFilter { $LiteralPath -like '\\*' }
+
+        (Copy-FileToRemote -ComputerName 'PC' -SourcePath $Source -DestinationDirectory 'C:\script_temp').Success | Should -BeTrue
+
+        Should -Invoke -ModuleName Execution New-Item -Times 0
+    }
+
+    It 'computador inacessível: não copia e marca Reachable = $false' {
+        Mock -ModuleName Execution Test-ComputerReachable { $false }
+
+        $Result = Copy-FileToRemote -ComputerName 'PC' -SourcePath $Source -DestinationDirectory 'C:\script_temp'
+
+        $Result.Success | Should -BeFalse
+        $Result.Reachable | Should -BeFalse
+        $Result.Error | Should -Be "Computer 'PC' is not reachable."
+        Should -Invoke -ModuleName Execution Copy-Item -Times 0
+    }
+
+    It 'arquivo de origem inexistente: não faz ping nem copia' {
+        $Result = Copy-FileToRemote -ComputerName 'PC' -SourcePath (Join-Path $TestDrive 'nada.exe') -DestinationDirectory 'C:\script_temp'
+
+        $Result.Success | Should -BeFalse
+        $Result.Reachable | Should -BeNullOrEmpty
+        $Result.Error | Should -Match 'not found'
+        Should -Invoke -ModuleName Execution Test-ComputerReachable -Times 0
+    }
+
+    It 'erro na cópia vira resultado de falha (sem lançar)' {
+        Mock -ModuleName Execution Copy-Item { throw 'Access denied' }
+
+        $Result = Copy-FileToRemote -ComputerName 'PC' -SourcePath $Source -DestinationDirectory 'C:\script_temp'
+
+        $Result.Success | Should -BeFalse
+        $Result.Reachable | Should -BeTrue
+        $Result.Error | Should -Match 'Access denied'
+    }
+
+    It 'rejeita destino que não é caminho local absoluto' {
+        $Result = Copy-FileToRemote -ComputerName 'PC' -SourcePath $Source -DestinationDirectory 'script_temp'
+
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -Match 'absolute local path'
+    }
+}

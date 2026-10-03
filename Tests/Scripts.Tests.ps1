@@ -21,7 +21,6 @@ Describe 'Get-ToolkitScript' {
 Describe 'Invoke-RemoteToolkitScript' {
 
     BeforeEach {
-        Mock -ModuleName Scripts Test-ComputerReachable { $true }
         Mock -ModuleName Scripts Copy-ScriptToRemote {
             [PSCustomObject]@{ Success = $true; RemoteUnc = (Join-Path $TestDrive 'copia.ps1'); RemotePath = 'C:\script_temp\Ativacao.ps1'; Error = $null }
         }
@@ -79,19 +78,24 @@ Describe 'Invoke-RemoteToolkitScript' {
         Should -Invoke -ModuleName Scripts Copy-ScriptToRemote -Times 0
     }
 
-    It 'não copia quando o computador está inacessível' {
-        Mock -ModuleName Scripts Test-ComputerReachable { $false }
-
-        (Invoke-RemoteToolkitScript -ComputerName 'PC' -ScriptName 'Ativacao').Success | Should -BeFalse
-        Should -Invoke -ModuleName Scripts Copy-ScriptToRemote -Times 0
-    }
-
-    It 'não executa quando a cópia falha' {
-        Mock -ModuleName Scripts Copy-ScriptToRemote { [PSCustomObject]@{ Success = $false; Error = 'Access denied' } }
+    It 'computador inacessível: não executa e mantém a mensagem de antes' {
+        Mock -ModuleName Scripts Copy-ScriptToRemote {
+            [PSCustomObject]@{ Success = $false; Reachable = $false; Error = "Computer 'PC' is not reachable." }
+        }
 
         $Result = Invoke-RemoteToolkitScript -ComputerName 'PC' -ScriptName 'Ativacao'
 
-        $Result.Error | Should -Match 'Access denied'
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -Be "Computer 'PC' is not reachable."
+        Should -Invoke -ModuleName Scripts Invoke-PsExecCommand -Times 0
+    }
+
+    It 'não executa quando a cópia falha' {
+        Mock -ModuleName Scripts Copy-ScriptToRemote { [PSCustomObject]@{ Success = $false; Reachable = $true; Error = 'Access denied' } }
+
+        $Result = Invoke-RemoteToolkitScript -ComputerName 'PC' -ScriptName 'Ativacao'
+
+        $Result.Error | Should -Be 'Copy failed: Access denied'
         Should -Invoke -ModuleName Scripts Invoke-PsExecCommand -Times 0
     }
 }
@@ -141,16 +145,29 @@ Describe 'Copy-ScriptToRemote' {
         $Result.Error | Should -Match 'not found'
     }
 
-    # Join-Path com 'C:\' exige um drive C: (só existe no Windows)
-    It 'monta o caminho UNC administrativo (C$)' -Skip:(-not $IsWindows) {
-        Mock -ModuleName Scripts Test-Path { $true }
-        Mock -ModuleName Scripts Copy-Item { }
+    It 'copia pelo C$ e mantém RemoteUnc / RemotePath' {
+        Mock -ModuleName Execution Test-ComputerReachable { $true }
+        Mock -ModuleName Execution Test-Path { Microsoft.PowerShell.Management\Test-Path @PesterBoundParameters }
+        Mock -ModuleName Execution Test-Path { $true } -ParameterFilter { $LiteralPath -like '\\*' }
+        Mock -ModuleName Execution Copy-Item { }
 
         $Result = Copy-ScriptToRemote -ComputerName '\\PC-001' -ScriptPath (Join-Path $RemoteScripts 'Ativacao.ps1')
 
         $Result.Success | Should -BeTrue
-        $Result.RemotePath | Should -Match 'script_temp.Ativacao\.ps1$'
-        Should -Invoke -ModuleName Scripts Copy-Item -ParameterFilter { $Destination -like '\\PC-001\C$\script_temp*Ativacao.ps1' }
+        $Result.RemoteUnc | Should -Be '\\PC-001\C$\script_temp\Ativacao.ps1'
+        $Result.RemotePath | Should -Be 'C:\script_temp\Ativacao.ps1'
+        Should -Invoke -ModuleName Execution Copy-Item -Times 1 -ParameterFilter { $Destination -eq '\\PC-001\C$\script_temp\Ativacao.ps1' }
+    }
+
+    It 'computador inacessível: Reachable = $false' {
+        Mock -ModuleName Execution Test-ComputerReachable { $false }
+        Mock -ModuleName Execution Copy-Item { }
+
+        $Result = Copy-ScriptToRemote -ComputerName 'PC' -ScriptPath (Join-Path $RemoteScripts 'Ativacao.ps1')
+
+        $Result.Success | Should -BeFalse
+        $Result.Reachable | Should -BeFalse
+        Should -Invoke -ModuleName Execution Copy-Item -Times 0
     }
 }
 

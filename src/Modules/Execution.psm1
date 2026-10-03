@@ -463,3 +463,128 @@ function Invoke-PsExecCommand {
         }
     }
 }
+
+<#
+.SYNOPSIS
+Copies a local file to a folder on a remote computer.
+
+.DESCRIPTION
+Copy-FileToRemote checks that the computer answers a ping (an offline
+computer would otherwise hold the SMB copy until its timeout), creates
+the destination folder through the administrative share (C$) and
+copies the file.
+
+.PARAMETER ComputerName
+Specifies the name of the remote computer ("PC-001" or "\\PC-001").
+
+.PARAMETER SourcePath
+Specifies the local file to copy.
+
+.PARAMETER DestinationDirectory
+Specifies the destination folder as seen on the remote computer
+(e.g. C:\script_temp).
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+
+Returns an object containing:
+
+- Success
+- Reachable    ($false when the computer did not answer the ping)
+- ComputerName
+- SourcePath
+- FileName
+- UncPath      (\\PC-001\C$\script_temp\file.exe, used from this computer)
+- RemotePath   (C:\script_temp\file.exe, used on the remote computer)
+- Error
+
+.EXAMPLE
+Copy-FileToRemote `
+    -ComputerName "PC-001" `
+    -SourcePath "\\server\apps\setup.msi" `
+    -DestinationDirectory "C:\script_temp"
+#>
+function Copy-FileToRemote {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$SourcePath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$DestinationDirectory
+    )
+
+    process {
+        $FileName = ($SourcePath -split '[\\/]')[-1]
+        $Reachable = $null
+
+        try {
+            if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+                throw "File not found: $SourcePath"
+            }
+
+            Write-Log `
+                -Level Info `
+                -Message "Copying '$FileName' to $ComputerName"
+
+            $Reachable = Test-ComputerReachable -ComputerName $ComputerName
+
+            if (-not $Reachable) {
+                throw "Computer '$ComputerName' is not reachable."
+            }
+
+            # Caminhos do Windows montados como texto: Join-Path com C:\ ou
+            # \\PC\C$ depende do sistema em que o toolkit está rodando.
+            $Destination = $DestinationDirectory.TrimEnd('\')
+            $UncDirectory = ConvertTo-AdminSharePath -ComputerName $ComputerName -Path $Destination
+            $UncPath = "$UncDirectory\$FileName"
+
+            if (-not (Test-Path -LiteralPath $UncDirectory)) {
+                New-Item -ItemType Directory -Path $UncDirectory -Force -ErrorAction Stop | Out-Null
+
+                Write-Log `
+                    -Level Info `
+                    -Message "Created remote directory: $UncDirectory"
+            }
+
+            Copy-Item -LiteralPath $SourcePath -Destination $UncPath -Force -ErrorAction Stop
+
+            Write-Log `
+                -Level Info `
+                -Message "Copied to $UncPath"
+
+            [PSCustomObject]@{
+                Success      = $true
+                Reachable    = $true
+                ComputerName = $ComputerName
+                SourcePath   = $SourcePath
+                FileName     = $FileName
+                UncPath      = $UncPath
+                RemotePath   = "$Destination\$FileName"
+                Error        = $null
+            }
+        }
+        catch {
+            Write-Log `
+                -Level Error `
+                -Message "Error copying '$FileName' to $ComputerName`: $($_.Exception.Message)"
+
+            [PSCustomObject]@{
+                Success      = $false
+                Reachable    = $Reachable
+                ComputerName = $ComputerName
+                SourcePath   = $SourcePath
+                FileName     = $FileName
+                UncPath      = $null
+                RemotePath   = $null
+                Error        = $_.Exception.Message
+            }
+        }
+    }
+}

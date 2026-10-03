@@ -11,7 +11,7 @@
 $Config = Get-ToolkitConfig
 
 $REPOSITORY_PATH = $Config.Software.RepositoryPath
-$TEMP_SCRIPT_PATH = $Config.Software.RemoteTempPath
+$TEMP_SCRIPT_PATH = if ($Config.Software.RemoteTempPath) { $Config.Software.RemoteTempPath } else { 'C:\script_temp' }
 $SUPPORTED_INSTALLERS = $Config.Software.SupportedInstallers
 
 $DEFAULT_INSTALL_TIMEOUT = $Config.Software.DefaultInstallTimeout
@@ -215,7 +215,9 @@ function Find-SoftwareInstaller {
 
 .OUTPUTS
     System.Object
-    Returns PSCustomObject with copy status and remote path.
+    Returns PSCustomObject with copy status and remote path:
+      RemotePath    = UNC path (\\PC\C$\script_temp\file.exe)
+      LocalPathOnly = path on the remote computer (C:\script_temp\file.exe)
 
 .EXAMPLE
     Copy-SoftwareToRemote -ComputerName "PC-001" -InstallerPath "\\server\path\installer.exe"
@@ -233,59 +235,33 @@ function Copy-SoftwareToRemote {
     )
 
     process {
-        try {
-            if (-not (Test-Path -Path $InstallerPath)) {
-                throw "Installer file not found: $InstallerPath"
-            }
+        $InstallerName = ($InstallerPath -split '[\\/]')[-1]
 
-            Write-Log `
-                -Level Info `
-                -Message "Copying installer to $ComputerName"
+        if (-not (Test-Path -Path $InstallerPath)) {
+            $Message = "Installer file not found: $InstallerPath"
 
-            $InstallerName = Split-Path -Leaf $InstallerPath
-
-            $DriveLetter = $TEMP_SCRIPT_PATH.Substring(0, 1)
-            $PathWithoutDrive = $TEMP_SCRIPT_PATH.Substring(3)
-            $RemotePath = "\\$ComputerName\$DriveLetter`$\$PathWithoutDrive"
-
-            # Cria diretório se não existir
-            if (-not (Test-Path -Path $RemotePath)) {
-                New-Item -ItemType Directory -Path $RemotePath -Force -ErrorAction Stop | Out-Null
-                Write-Log `
-                    -Level Info `
-                    -Message "Created remote directory: $RemotePath"
-            }
-
-            # Copia o arquivo
-            $RemoteFilePath = Join-Path $RemotePath $InstallerName
-            Copy-Item -Path $InstallerPath -Destination $RemoteFilePath -Force -ErrorAction Stop
-
-            Write-Log `
-                -Level Info `
-                -Message "Installer copied successfully to $RemoteFilePath"
-
-            [PSCustomObject]@{
-                Success       = $true
-                ComputerName  = $ComputerName
-                LocalPath     = $InstallerPath
-                RemotePath    = $RemoteFilePath
-                FileName      = $InstallerName
-                LocalPathOnly = Join-Path $TEMP_SCRIPT_PATH $InstallerName
-            }
-        }
-        catch {
             Write-Log `
                 -Level Error `
-                -Message "Error copying installer to $ComputerName`: $($_.Exception.Message)"
+                -Message "Error copying installer to $ComputerName`: $Message"
 
-            [PSCustomObject]@{
-                Success       = $false
-                ComputerName  = $ComputerName
-                LocalPath     = $InstallerPath
-                RemotePath    = $null
-                FileName      = Split-Path -Leaf $InstallerPath
-                Error         = $_.Exception.Message
-            }
+            $Copy = [PSCustomObject]@{ Success = $false; Error = $Message }
+        }
+        else {
+            $Copy = Copy-FileToRemote `
+                -ComputerName $ComputerName `
+                -SourcePath $InstallerPath `
+                -DestinationDirectory $TEMP_SCRIPT_PATH
+        }
+
+        # Mantém os nomes de propriedades usados pelo menu de instalação
+        [PSCustomObject]@{
+            Success       = $Copy.Success
+            ComputerName  = $ComputerName
+            LocalPath     = $InstallerPath
+            RemotePath    = $Copy.UncPath
+            FileName      = $InstallerName
+            LocalPathOnly = $Copy.RemotePath
+            Error         = $Copy.Error
         }
     }
 }

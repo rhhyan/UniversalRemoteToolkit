@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # Universal Remote Toolkit
 # Module: Utils
 # Description: Utility and helper functions
@@ -101,6 +101,63 @@ function Get-ApplicationRoot {
 }
 
 
+function ConvertTo-AdminSharePath {
+    <#
+    .SYNOPSIS
+        Converts a local path on a remote computer to its administrative share (UNC) path.
+
+    .DESCRIPTION
+        C:\script_temp on PC-001 becomes \\PC-001\C$\script_temp.
+        Accepts the computer name with or without the leading "\\".
+
+    .PARAMETER ComputerName
+        Name of the remote computer.
+
+    .PARAMETER Path
+        Absolute local path on the remote computer (e.g. C:\script_temp).
+
+    .EXAMPLE
+        ConvertTo-AdminSharePath -ComputerName "PC-001" -Path "C:\script_temp"
+
+    .OUTPUTS
+        System.String
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+
+    $HostName = $ComputerName.Trim().TrimStart('\')
+
+    if ([string]::IsNullOrWhiteSpace($HostName)) {
+        throw "Invalid computer name: '$ComputerName'"
+    }
+
+    # Só caminho absoluto com letra de unidade (C:\pasta); UNC e relativo não têm C$
+    if ($Path -notmatch '^([A-Za-z]):(?:\\(.*))?$') {
+        throw "Path must be an absolute local path such as C:\folder: '$Path'"
+    }
+
+    $Drive = $Matches[1].ToUpper()
+    $Rest = ([string]$Matches[2]).Trim('\')
+
+    $UncPath = "\\$HostName\$Drive`$"
+
+    if ($Rest) {
+        $UncPath += "\$Rest"
+    }
+
+    return $UncPath
+}
+
+
 function Format-Duration {
     <#
     .SYNOPSIS
@@ -140,5 +197,6 @@ Export-ModuleMember -Function @(
     'Clear-Toolkit'
     'Format-Date'
     'Get-ApplicationRoot'
+    'ConvertTo-AdminSharePath'
     'Format-Duration'
 )
