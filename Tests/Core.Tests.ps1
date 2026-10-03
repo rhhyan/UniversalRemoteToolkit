@@ -52,10 +52,6 @@ Describe 'Config' {
 
 Describe 'Utils' {
 
-    It 'Format-Date usa o padrão yyyy-MM-dd HH:mm:ss' {
-        Format-Date -Date ([datetime]'2026-01-02 03:04:05') | Should -Be '2026-01-02 03:04:05'
-    }
-
     It 'Test-IsAdministrator retorna booleano' {
         Test-IsAdministrator | Should -BeOfType [bool]
     }

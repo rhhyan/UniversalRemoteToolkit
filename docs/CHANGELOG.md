@@ -24,7 +24,7 @@ All notable changes to this project will be documented here.
 
 ### Added
 
-- Testes automatizados com Pester (`Tests/`, 214 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
+- Testes automatizados com Pester (`Tests/`, 213 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
 - Menu Scripts (`Scripts.psm1`): execução remota de scripts de manutenção em uma ou várias máquinas, com resumo por computador
   - Otimização do Windows: limpeza de perfis + SFC, debloat, DISM, efeitos visuais e desativação de serviços
   - Ativação Windows/Office via KMS (`Scripts.KmsHost` no Settings.json) e consulta de status
@@ -73,7 +73,7 @@ Revisão de arquitetura para que cada módulo tenha uma responsabilidade e depen
 - Config, Logger, Execution e ConsoleUI têm `Export-ModuleMember`; funções auxiliares (`Build-PsExecArguments`, `Invoke-PsExecProcess`, `Format-LogMessage`, `Format-CenteredText` etc.) agora são internas
 - Exit code diferente de 0 é registrado como Info pelo `Invoke-PsExecCommand`; quem chama decide se é falha (3010, exit 2 dos Scripts e a máscara do OffScrub não são)
 - `Write-Log` sem `Start-Log` não lança mais erro: a mensagem vai para o Verbose, e os módulos podem ser usados fora do menu
-- Removidos por falta de uso: `Pause-Toolkit`, `Clear-Toolkit`, `Get-ApplicationRoot`, `Format-Duration` e `Get-SoftwareUninstallCommand` (substituída por `Find-InstalledSoftware`)
+- Removidos por falta de uso: `Pause-Toolkit`, `Clear-Toolkit`, `Get-ApplicationRoot`, `Format-Duration`, `Format-Date` e `Get-SoftwareUninstallCommand` (substituída por `Find-InstalledSoftware`)
 
 ---
 

@@ -40,25 +40,6 @@ function Test-IsAdministrator {
 }
 
 
-function Format-Date {
-    <#
-    .SYNOPSIS
-        Formats a DateTime value using the toolkit standard format.
-
-    .PARAMETER Date
-        DateTime value to format.
-    #>
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [datetime]$Date
-    )
-
-    return $Date.ToString("yyyy-MM-dd HH:mm:ss")
-}
-
-
 function ConvertTo-AdminSharePath {
     <#
     .SYNOPSIS
@@ -118,6 +99,5 @@ function ConvertTo-AdminSharePath {
 
 Export-ModuleMember -Function @(
     'Test-IsAdministrator'
-    'Format-Date'
     'ConvertTo-AdminSharePath'
 )
