@@ -56,25 +56,6 @@ Describe 'Utils' {
         Format-Date -Date ([datetime]'2026-01-02 03:04:05') | Should -Be '2026-01-02 03:04:05'
     }
 
-    It 'Get-ApplicationRoot aponta para a raiz do repositório' {
-        Get-ApplicationRoot | Should -Be $RepoRoot
-    }
-
-    It 'Format-Duration formata <Case>' -ForEach @(
-        @{ Case = 'milissegundos'; Ticks = [timespan]::FromMilliseconds(250).Ticks; Pattern = '^250 ms$' }
-        @{ Case = 'segundos'; Ticks = [timespan]::FromSeconds(12.5).Ticks; Pattern = '^12[.,]50 s$' }
-        @{ Case = 'minutos'; Ticks = [timespan]::FromSeconds(125).Ticks; Pattern = '^02m 05s$' }
-    ) {
-        # Stopwatch não permite definir o tempo; usa um objeto com a mesma interface
-        $Stopwatch = [System.Diagnostics.Stopwatch]::new()
-        $Elapsed = [timespan]::new($Ticks)
-
-        $Fake = $Stopwatch | Add-Member -MemberType ScriptProperty -Name Elapsed -Value { $Elapsed }.GetNewClosure() -Force -PassThru
-        $Fake | Add-Member -MemberType ScriptProperty -Name ElapsedMilliseconds -Value { [long]$Elapsed.TotalMilliseconds }.GetNewClosure() -Force
-
-        Format-Duration -Stopwatch $Fake | Should -Match $Pattern
-    }
-
     It 'Test-IsAdministrator retorna booleano' {
         Test-IsAdministrator | Should -BeOfType [bool]
     }

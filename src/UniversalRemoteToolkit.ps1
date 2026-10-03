@@ -574,13 +574,10 @@ function Invoke-SoftwareMenu {
                         -Level Info `
                         -Message "Starting software uninstall workflow"
 
-                    # Step 1: Get uninstall command
+                    # Step 1: Find the installed program
                     Write-Host ""
                     Write-Status -Status Running -Message "Searching for software on $Computer..."
-                    $FoundSoftware = @(
-                        Get-InstalledSoftware -ComputerName $Computer |
-                            Where-Object { $_.Name -like "*$SoftwareName*" }
-                    )
+                    $FoundSoftware = @(Find-InstalledSoftware -ComputerName $Computer -SoftwareName $SoftwareName)
 
                     if ($FoundSoftware.Count -eq 0) {
                         Show-ExecutionResult `

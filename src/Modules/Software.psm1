@@ -713,27 +713,33 @@ try {
 }
 
 # ============================================================
-# GET SOFTWARE UNINSTALL COMMAND
+# FIND INSTALLED SOFTWARE
 # ============================================================
 
 <#
 .SYNOPSIS
-    Retrieves the uninstall command for a specific software.
+    Searches the installed programs of a remote computer by name.
+
+.DESCRIPTION
+    Returns every program whose name contains SoftwareName (wildcard
+    match, case-insensitive), so the caller can choose which one to
+    uninstall. Outputs nothing when nothing matches; wrap the call in
+    @() to always get an array.
 
 .PARAMETER ComputerName
     Name of the remote computer.
 
 .PARAMETER SoftwareName
-    Name of the software to uninstall.
+    Part of the program name (e.g. "Chrome").
 
 .OUTPUTS
-    System.Object
-    Returns the uninstall command and related information.
+    System.Object[]
+    Entries in the Get-InstalledSoftware format.
 
 .EXAMPLE
-    Get-SoftwareUninstallCommand -ComputerName "PC-001" -SoftwareName "Google Chrome"
+    Find-InstalledSoftware -ComputerName "PC-001" -SoftwareName "Office"
 #>
-function Get-SoftwareUninstallCommand {
+function Find-InstalledSoftware {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -746,39 +752,17 @@ function Get-SoftwareUninstallCommand {
     )
 
     process {
-        try {
-            Write-Log `
-                -Level Info `
-                -Message "Retrieving uninstall command for $SoftwareName on $ComputerName"
+        $Found = @(
+            Get-InstalledSoftware -ComputerName $ComputerName |
+                Where-Object { $_.Name -like "*$SoftwareName*" }
+        )
 
-            $InstalledApps = Get-InstalledSoftware -ComputerName $ComputerName
+        Write-Log `
+            -Level Info `
+            -Message "Found $($Found.Count) program(s) matching '$SoftwareName' on $ComputerName"
 
-            $Software = $InstalledApps | Where-Object {
-                $_.Name -like "*$SoftwareName*"
-            } | Select-Object -First 1
-
-            if ($Software) {
-                Write-Log `
-                    -Level Info `
-                    -Message "Found uninstall command for $($Software.Name)"
-
-                return $Software
-            }
-            else {
-                Write-Log `
-                    -Level Warning `
-                    -Message "No software found matching: $SoftwareName"
-
-                return $null
-            }
-        }
-        catch {
-            Write-Log `
-                -Level Error `
-                -Message "Error retrieving uninstall command: $($_.Exception.Message)"
-
-            throw $_
-        }
+        # Use @(Find-InstalledSoftware ...) para sempre ter um array
+        $Found
     }
 }
 
@@ -1427,7 +1411,7 @@ Export-ModuleMember -Function @(
     'Install-RemoteSoftware'
     'Invoke-SoftwareInstallation'
     'Get-InstalledSoftware'
-    'Get-SoftwareUninstallCommand'
+    'Find-InstalledSoftware'
     'Resolve-UninstallCommand'
     'Uninstall-RemoteSoftware'
 )

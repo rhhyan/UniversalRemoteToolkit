@@ -354,6 +354,34 @@ Describe 'Get-InstalledSoftware' {
     }
 }
 
+Describe 'Find-InstalledSoftware' {
+
+    BeforeEach {
+        Mock -ModuleName Software Get-InstalledSoftware {
+            @(
+                [PSCustomObject]@{ Name = 'Google Chrome' }
+                [PSCustomObject]@{ Name = 'Microsoft Office Professional Plus 2016' }
+                [PSCustomObject]@{ Name = 'Microsoft Office Standard 2016' }
+            )
+        }
+    }
+
+    It 'devolve todos os programas que contêm o nome (sem diferenciar maiúsculas)' {
+        $Found = @(Find-InstalledSoftware -ComputerName 'PC' -SoftwareName 'office')
+
+        $Found | Should -HaveCount 2
+        $Found[1].Name | Should -Be 'Microsoft Office Standard 2016'
+    }
+
+    It 'um resultado continua contando 1 dentro de @()' {
+        @(Find-InstalledSoftware -ComputerName 'PC' -SoftwareName 'Chrome') | Should -HaveCount 1
+    }
+
+    It 'nenhum resultado vira array vazio dentro de @()' {
+        @(Find-InstalledSoftware -ComputerName 'PC' -SoftwareName 'Firefox') | Should -HaveCount 0
+    }
+}
+
 Describe 'Resolve-UninstallCommand' {
 
     It '<Case>' -ForEach @(

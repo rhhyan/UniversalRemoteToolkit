@@ -40,35 +40,6 @@ function Test-IsAdministrator {
 }
 
 
-function Pause-Toolkit {
-    <#
-    .SYNOPSIS
-        Pauses the toolkit and waits for user input.
-    #>
-
-    [CmdletBinding()]
-    param(
-        [Parameter()]
-        [string]$Message = "Pressione Enter para continuar"
-    )
-
-    Read-Host $Message | Out-Null
-}
-
-
-function Clear-Toolkit {
-    <#
-    .SYNOPSIS
-        Clears the console screen.
-    #>
-
-    [CmdletBinding()]
-    param()
-
-    Clear-Host
-}
-
-
 function Format-Date {
     <#
     .SYNOPSIS
@@ -85,20 +56,6 @@ function Format-Date {
     )
 
     return $Date.ToString("yyyy-MM-dd HH:mm:ss")
-}
-
-
-function Get-ApplicationRoot {
-    <#
-    .SYNOPSIS
-        Returns the root directory of the Universal Remote Toolkit.
-    #>
-
-    [CmdletBinding()]
-    param()
-
-    # Modules -> src -> raiz
-    return Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 }
 
 
@@ -159,45 +116,8 @@ function ConvertTo-AdminSharePath {
 }
 
 
-function Format-Duration {
-    <#
-    .SYNOPSIS
-        Formats the elapsed time of a Stopwatch into a human-readable string.
-
-    .PARAMETER Stopwatch
-        Stopwatch containing the elapsed execution time.
-
-    .EXAMPLE
-        Format-Duration -Stopwatch $Stopwatch
-
-    .OUTPUTS
-        System.String
-    #>
-
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [System.Diagnostics.Stopwatch]$Stopwatch
-    )
-
-    if ($Stopwatch.Elapsed.TotalSeconds -lt 1) {
-        return "$($Stopwatch.ElapsedMilliseconds) ms"
-    }
-
-    if ($Stopwatch.Elapsed.TotalMinutes -lt 1) {
-        return ("{0:N2} s" -f $Stopwatch.Elapsed.TotalSeconds)
-    }
-
-    return ("{0:mm}m {0:ss}s" -f $Stopwatch.Elapsed)
-}
-
-
 Export-ModuleMember -Function @(
     'Test-IsAdministrator'
-    'Pause-Toolkit'
-    'Clear-Toolkit'
     'Format-Date'
-    'Get-ApplicationRoot'
     'ConvertTo-AdminSharePath'
-    'Format-Duration'
 )
