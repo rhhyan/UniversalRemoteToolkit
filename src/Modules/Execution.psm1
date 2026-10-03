@@ -305,6 +305,10 @@ Specifies the maximum execution time in seconds.
 
 The default value is 60 seconds.
 
+.PARAMETER System
+Runs the remote process under the Local System account (PsExec -s).
+By default the process runs with the operator's account.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 
@@ -363,7 +367,10 @@ function Invoke-PsExecCommand {
 
         [Parameter()]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = 60
+        [int]$TimeoutSeconds = 60,
+
+        [Parameter()]
+        [switch]$System
     )
 
     process {
@@ -391,11 +398,14 @@ function Invoke-PsExecCommand {
             $FinalArguments = Build-PsExecArguments `
                 -ComputerName $ComputerName `
                 -Executable $Executable `
-                -Arguments $Arguments
+                -Arguments $Arguments `
+                -System:$System
+
+            $Account = if ($System) { " as SYSTEM" } else { "" }
 
             Write-Log `
                 -Level Info `
-                -Message "Executing '$Executable' on $ComputerName."
+                -Message "Executing '$Executable' on $ComputerName$Account."
 
             # Execute PsExec.
             $ProcessResult = Invoke-PsExecProcess `

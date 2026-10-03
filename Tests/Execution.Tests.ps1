@@ -116,6 +116,14 @@ Describe 'Invoke-PsExecCommand' {
         }
     }
 
+    It '-System executa como SYSTEM (PsExec -s)' {
+        Invoke-PsExecCommand -ComputerName 'PC-001' -Executable 'cmd.exe' -Arguments '/c ver' -System | Out-Null
+
+        Should -Invoke -ModuleName Execution Invoke-PsExecProcess -Times 1 -ParameterFilter {
+            $ArgumentList -eq '\\PC-001 -accepteula -nobanner -s cmd.exe /c ver'
+        }
+    }
+
     It 'não executa quando o PsExec não existe' {
         Mock -ModuleName Execution Test-PsExecInstalled { $false }
 

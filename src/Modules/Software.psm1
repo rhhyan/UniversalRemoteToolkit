@@ -1117,11 +1117,13 @@ function Uninstall-RemoteSoftware {
                 $FinalArguments = $Plan.Arguments
             }
 
+            # O OffScrub foi validado rodando como SYSTEM (PsExec -s)
             $Result = Invoke-PsExecCommand `
                 -ComputerName $ComputerName `
                 -Executable $Executable `
                 -Arguments $FinalArguments `
-                -TimeoutSeconds $TimeoutSeconds
+                -TimeoutSeconds $TimeoutSeconds `
+                -System:$IsOffScrub
 
             $Duration = $Result.DurationMS
             $RebootRequired = ($Result.ExitCode -in $REBOOT_EXIT_CODES)

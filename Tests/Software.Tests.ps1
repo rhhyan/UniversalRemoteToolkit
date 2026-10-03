@@ -372,7 +372,7 @@ Describe 'Uninstall-RemoteSoftware' {
         $Result.UninstallerType | Should -Be 'NSIS'
 
         Should -Invoke -ModuleName Software Invoke-PsExecCommand -Times 1 -ParameterFilter {
-            $Executable -eq 'C:\Program Files\VideoLAN\VLC\uninstall.exe' -and $Arguments -eq '/S'
+            $Executable -eq 'C:\Program Files\VideoLAN\VLC\uninstall.exe' -and $Arguments -eq '/S' -and -not $System
         }
     }
 
@@ -513,7 +513,8 @@ Describe 'Uninstall-RemoteSoftware (Office MSI / OffScrub)' {
         Should -Invoke -ModuleName Software Invoke-PsExecCommand -Times 1 -ParameterFilter {
             $Executable -eq 'cscript.exe' -and
             $Arguments -eq '//nologo "C:\script_temp\OffScrub_O16msi.vbs" PROPLUS /Quiet /NoCancel /Force /Log "C:\script_temp\OffScrub"' -and
-            $TimeoutSeconds -eq 3600
+            $TimeoutSeconds -eq 3600 -and
+            $System
         }
 
         Join-Path $RemoteDir 'OffScrub_O16msi.vbs' | Should -Not -Exist
