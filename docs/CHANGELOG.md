@@ -24,7 +24,7 @@ All notable changes to this project will be documented here.
 
 ### Added
 
-- Testes automatizados com Pester (`Tests/`, 141 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
+- Testes automatizados com Pester (`Tests/`, 160 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
 - Menu Scripts (`Scripts.psm1`): execução remota de scripts de manutenção em uma ou várias máquinas, com resumo por computador
   - Otimização do Windows: limpeza de perfis + SFC, debloat, DISM, efeitos visuais e desativação de serviços
   - Ativação Windows/Office via KMS (`Scripts.KmsHost` no Settings.json) e consulta de status
@@ -34,6 +34,13 @@ All notable changes to this project will be documented here.
 - Em caso de timeout, o processo do desinstalador é encerrado na máquina remota
 - Seleção entre múltiplos resultados na instalação/desinstalação (antes usava o primeiro silenciosamente)
 - Uso de `QuietUninstallString` quando disponível
+- Desinstalação do Office 2016 MSI (volume) via OffScrub da Microsoft (`Bin\OffScrub\OffScrub_O16msi.vbs`): o Office Setup Controller não tem modo silencioso que funcione como SYSTEM (`/config` falha com 30054 e `msiexec /x` com 1603)
+  - Remove só o SKU registrado (ex.: `PROPLUS`, `STANDARD`), nunca `ALL`, para não levar outra edição junto
+  - Timeout próprio de 3600 s (`Software.OffScrubTimeout`, opcional) e exit code tratado como máscara de bits (falha = bit 1; reinicialização = bits 2 e 32)
+  - O `.vbs` copiado é apagado ao final; a pasta de log `OffScrub` só é apagada no sucesso e, na falha, o caminho do log aparece na mensagem de erro
+  - No timeout o OffScrub não é encerrado (interromper a limpeza deixaria o Office pela metade)
+  - Menu avisa que o OffScrub fecha Word/Excel/Outlook à força e pode levar 20+ min
+  - Office 2013 MSI (`OffScrub_O15msi.vbs`) usa a mesma lógica quando o script estiver em `Bin\OffScrub`
 - Remoção do instalador copiado para a máquina remota após a instalação
 - Indicação de reinicialização pendente no resultado
 
