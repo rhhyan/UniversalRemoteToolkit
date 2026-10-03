@@ -49,11 +49,7 @@ function Start-Log {
     try {
 
         # Valores padrão (usados se a configuração não puder ser lida)
-        $LogsPath = Join-Path (
-            Split-Path -Parent (
-                Split-Path -Parent $PSScriptRoot
-            )
-        ) "Logs"
+        $LogsPath = Join-Path (Get-ToolkitRoot) "Logs"
         $RetentionDays = 30
         $EnableConsole = $true
 
@@ -149,15 +145,17 @@ function Write-Log {
 
     process {
 
-        # Verifica se o logger foi iniciado
-        if (-not $script:LogSession) {
-            throw "Sessão de log não iniciada. Execute Start-Log antes."
-        }
-
         # Monta a mensagem formatada
         $FormattedMessage = Format-LogMessage `
             -Mensagem $Message `
             -Nivel $Level
+
+        # Sem sessão (módulos usados fora do menu, sem Start-Log): não há
+        # arquivo de log; a mensagem fica visível com -Verbose
+        if (-not $script:LogSession) {
+            Write-Verbose $FormattedMessage
+            return
+        }
 
         # Escreve no arquivo
         Add-Content `

@@ -115,9 +115,29 @@ Describe 'Logger' {
         Stop-Log
     }
 
-    It 'Write-Log falha sem sessão iniciada' {
+    It 'Write-Log sem sessão iniciada não lança erro e vai para o Verbose' {
         Stop-Log
-        { Write-Log -Message 'x' } | Should -Throw '*Start-Log*'
+
+        { Write-Log -Message 'x' } | Should -Not -Throw
+
+        $Verbose = Write-Log -Level Warning -Message 'sem sessão' -Verbose 4>&1
+        "$Verbose" | Should -Match '\[WARNING\] sem sessão'
+    }
+
+    It 'Write-Log sem sessão não cria arquivo de log' {
+        Stop-Log
+        Write-Log -Message 'x'
+
+        Test-Path $LogsPath | Should -BeFalse
+    }
+
+    It 'usa a pasta Logs na raiz do projeto quando a configuração não pode ser lida' {
+        Mock -ModuleName Logger Get-ToolkitConfig { throw 'sem Settings.json' }
+        Mock -ModuleName Logger Get-ToolkitRoot { $TestDrive }
+
+        Start-Log
+
+        Get-ChildItem (Join-Path $TestDrive 'Logs') -Filter 'URT_*.log' | Should -HaveCount 1
     }
 
     It 'cria a pasta e o arquivo de log e grava as mensagens' {
@@ -156,7 +176,10 @@ Describe 'Logger' {
         Stop-Log
 
         Get-Content $LogFile -Raw | Should -Match 'Tempo total: \d{2}:\d{2}:\d{2}'
-        { Write-Log -Message 'x' } | Should -Throw
+
+        # Depois do Stop-Log nada mais vai para o arquivo
+        Write-Log -Message 'depois do stop'
+        Get-Content $LogFile -Raw | Should -Not -Match 'depois do stop'
     }
 }
 
