@@ -15,6 +15,24 @@ Describe 'Config' {
         $Config.Software.RemoteTempPath | Should -Match '^[A-Za-z]:\\'
     }
 
+    It 'lê o Settings.json do disco uma vez só (cache) e relê com -Force' {
+        InModuleScope Config { $script:ConfigCache = $null }
+        Mock -ModuleName Config Get-Content { '{ "Application": { "Name": "Cache" } }' }
+
+        try {
+            (Get-ToolkitConfig).Application.Name | Should -Be 'Cache'
+            (Get-ToolkitConfig).Application.Name | Should -Be 'Cache'
+            Should -Invoke -ModuleName Config Get-Content -Times 1 -Exactly
+
+            Get-ToolkitConfig -Force | Out-Null
+            Should -Invoke -ModuleName Config Get-Content -Times 2 -Exactly
+        }
+        finally {
+            # Não deixa o JSON falso no cache para os outros testes
+            InModuleScope Config { $script:ConfigCache = $null }
+        }
+    }
+
     It 'Get-ToolkitRoot aponta para a raiz do repositório' {
         (Get-ToolkitRoot) | Should -Be $RepoRoot
     }

@@ -6,18 +6,44 @@
 #>
 
 
+# Configuração lida do disco na primeira chamada (Get-ToolkitConfig -Force relê)
+$script:ConfigCache = $null
+
+
 function Get-ToolkitConfig {
-    # Modules\Config.psm1 -> sobe um nível pra chegar na raiz UTR\
-    $ProjectRoot = Split-Path -Parent $PSScriptRoot
+    <#
+    .SYNOPSIS
+        Retorna o conteúdo do Settings.json.
 
-    $ConfigFile = Join-Path $ProjectRoot "Config\Settings.json"
+    .DESCRIPTION
+        O arquivo é lido uma vez e mantido em cache. Use -Force para
+        reler depois de alterar o Settings.json.
+    #>
 
-    if (Test-Path $ConfigFile) {
-        Get-Content $ConfigFile -Raw | ConvertFrom-Json
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [switch]$Force
+    )
+
+    if ($script:ConfigCache -and -not $Force) {
+        return $script:ConfigCache
     }
-    else {
+
+    # O Settings.json fica em src\Config: Modules\Config.psm1 -> sobe um
+    # nível até src\. Não confundir com Get-ToolkitRoot (raiz do projeto,
+    # base dos caminhos relativos dentro do Settings.json).
+    $SourceRoot = Split-Path -Parent $PSScriptRoot
+
+    $ConfigFile = Join-Path $SourceRoot "Config\Settings.json"
+
+    if (-not (Test-Path $ConfigFile)) {
         throw "Arquivo de configuração não encontrado: $ConfigFile"
     }
+
+    $script:ConfigCache = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+
+    return $script:ConfigCache
 }
 
 
