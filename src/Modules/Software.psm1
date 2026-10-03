@@ -30,6 +30,18 @@ $GUID_PATTERN = '\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[
 $SUCCESS_EXIT_CODES = @(0, 3010, 1641)
 $REBOOT_EXIT_CODES = @(3010, 1641)
 
+# OffScrub (Microsoft): remove o Office MSI quando o Office Setup Controller
+# não consegue desinstalar em modo silencioso. Chave = versão (OFFICE16...).
+# Uma versão só é usada se o script existir em Bin\OffScrub.
+$OFFSCRUB_PATH = Join-Path (Get-ToolkitRoot) 'Bin/OffScrub'
+$OFFSCRUB_SCRIPTS = @{
+    '16' = @{ Script = 'OffScrub_O16msi.vbs'; Type = 'Office 2016 MSI (OffScrub)' }
+    '15' = @{ Script = 'OffScrub_O15msi.vbs'; Type = 'Office 2013 MSI (OffScrub)' }
+}
+
+# A varredura de componentes do OffScrub é lenta (~20 min observados)
+$OFFSCRUB_TIMEOUT = if ($Config.Software.OffScrubTimeout) { [int]$Config.Software.OffScrubTimeout } else { 3600 }
+
 # ============================================================
 # GET SOFTWARE REPOSITORY
 # ============================================================
@@ -732,6 +744,8 @@ function Split-UninstallCommandLine {
       Chromium         --force-uninstall (Chrome, Edge, ...)
       Squirrel         -s (Teams classic, Discord, Slack, ...)
       InstallShield    no silent mode without a response file
+      Office MSI       cscript OffScrub_O1xmsi.vbs <SKU> /Quiet /NoCancel /Force
+                       (Office Setup Controller, OFFICE15/OFFICE16)
       Generic          command as registered (may show UI)
 
     PsExec runs without a desktop session, so an uninstaller that waits
@@ -809,6 +823,39 @@ function Resolve-UninstallCommand {
 
         # Path.GetFileName não separa "\" fora do Windows; divide manualmente
         $FileName = ($Executable -split '[\\/]')[-1]
+
+        # Office 2013/2016 MSI (volume): o Office Setup Controller não tem modo
+        # silencioso que funcione como SYSTEM (/config falha com 30054 e
+        # msiexec /x com 1603), então a remoção é feita pelo OffScrub.
+        # Remove só o SKU registrado (nunca ALL), para não levar outra edição junto.
+        $OfficeVersion = if ($Executable -match '\\OFFICE(\d{2})\\Office Setup Controller\\') { $Matches[1] }
+        $Sku = if ($Arguments -match '(?:^|\s)/uninstall\s+([A-Za-z0-9_]+)(?:\s|$)') { $Matches[1].ToUpper() }
+
+        if ($OfficeVersion -and $Sku -and $OFFSCRUB_SCRIPTS.ContainsKey($OfficeVersion)) {
+            $OffScrub = $OFFSCRUB_SCRIPTS[$OfficeVersion]
+            $ScriptPath = Join-Path $OFFSCRUB_PATH $OffScrub.Script
+
+            if (Test-Path -LiteralPath $ScriptPath) {
+                $RemoteTemp = $TEMP_SCRIPT_PATH.TrimEnd('\')
+                $RemoteScript = "$RemoteTemp\$($OffScrub.Script)"
+                $RemoteLog = "$RemoteTemp\OffScrub"
+
+                $Plan = & $NewPlan $OffScrub.Type 'cscript.exe' "//nologo `"$RemoteScript`" $Sku /Quiet /NoCancel /Force /Log `"$RemoteLog`"" $true
+
+                $Plan | Add-Member -NotePropertyMembers @{
+                    Sku              = $Sku
+                    ScriptPath       = $ScriptPath
+                    RemoteScriptPath = $RemoteScript
+                    RemoteLogPath    = $RemoteLog
+                }
+
+                return $Plan
+            }
+
+            Write-Log `
+                -Level Warning `
+                -Message "OffScrub script not found ($ScriptPath); using the registered uninstall command for '$($Software.Name)'"
+        }
 
         if ($KeyName -match '_is1$' -or $FileName -match '^unins\d{3}\.exe$') {
             if ($Arguments -notmatch '/VERYSILENT') {
@@ -976,8 +1023,29 @@ function Uninstall-RemoteSoftware {
         $SoftwareName = [string]$Software.Name
         $Plan = $null
 
+        # Arquivos do OffScrub na máquina remota (caminhos UNC), tratados no finally:
+        # o .vbs é sempre apagado; a pasta de log só no sucesso.
+        $RemoteScript = $null
+        $RemoteLogFolder = $null
+
+        # Hashtable para o $NewResult (escopo filho) informar o resultado ao finally
+        $Outcome = @{ Success = $false }
+
         $NewResult = {
             param($Success, $Verified, $ExitCode, $ErrorMessage, $Output, $Duration, $RebootRequired)
+
+            $Outcome.Success = [bool]$Success
+
+            # Na falha os logs do OffScrub são mantidos para diagnóstico
+            if (-not $Success -and $RemoteLogFolder) {
+                $ErrorMessage = ([string]$ErrorMessage).Trim()
+
+                if ($ErrorMessage -and $ErrorMessage -notmatch '[.!?]$') {
+                    $ErrorMessage += '.'
+                }
+
+                $ErrorMessage = "$ErrorMessage Check the OffScrub log in $($Plan.RemoteLogPath).".Trim()
+            }
 
             [PSCustomObject]@{
                 Success         = $Success
@@ -1014,6 +1082,30 @@ function Uninstall-RemoteSoftware {
                     -Message "No silent switch known for '$SoftwareName'; the uninstaller may wait for input until the timeout"
             }
 
+            $IsOffScrub = [bool]$Plan.ScriptPath
+
+            if ($IsOffScrub) {
+                Write-Log `
+                    -Level Warning `
+                    -Message "OffScrub closes Office applications (Word, Excel, Outlook...) on $ComputerName and may take 20+ minutes"
+
+                # Timeout próprio, a menos que o chamador tenha informado um
+                if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds')) {
+                    $TimeoutSeconds = $OFFSCRUB_TIMEOUT
+                }
+
+                $Copy = Copy-SoftwareToRemote `
+                    -ComputerName $ComputerName `
+                    -InstallerPath $Plan.ScriptPath
+
+                if (-not $Copy.Success) {
+                    return & $NewResult $false $null $null "Could not copy OffScrub to $ComputerName`: $($Copy.Error)" $null $null $false
+                }
+
+                $RemoteScript = $Copy.RemotePath
+                $RemoteLogFolder = Join-Path (Split-Path -Parent $Copy.RemotePath) 'OffScrub'
+            }
+
             # Variáveis de ambiente (%ProgramFiles%...) só são expandidas pelo cmd.
             # As aspas externas extras são removidas pelo próprio cmd /c.
             if ($Plan.Executable -match '%') {
@@ -1042,9 +1134,39 @@ function Uninstall-RemoteSoftware {
 
             $ExitOk = (-not $Result.TimedOut -and $Result.ExitCode -in $AcceptedCodes)
 
+            # O exit code do OffScrub é uma máscara de bits:
+            #   1  = falha geral
+            #   2  = reinicialização necessária
+            #   8  = msiexec falhou, mas a limpeza forçada continuou (informativo)
+            #   32 = renomeações pendentes / rodar de novo após reiniciar
+            # Negativo (ex: 0xC000013A) = processo interrompido.
+            if ($IsOffScrub -and -not $Result.TimedOut) {
+                $Code = $Result.ExitCode
+                $ExitOk = ($null -ne $Code -and $Code -ge 0 -and ($Code -band 1) -eq 0)
+                $RebootRequired = ($ExitOk -and ($Code -band (2 -bor 32)) -ne 0)
+
+                if ($ExitOk -and ($Code -band 8) -ne 0) {
+                    Write-Log `
+                        -Level Warning `
+                        -Message "OffScrub on $ComputerName`: msiexec removal failed, forced cleanup was used (exit code $Code)"
+                }
+            }
+
             if ($Result.TimedOut) {
                 # O PsExec local foi encerrado, mas o desinstalador continua
                 # rodando na máquina remota (provavelmente aguardando uma janela).
+                if ($IsOffScrub) {
+                    # Matar o OffScrub no meio da limpeza deixa o Office pela
+                    # metade; ele continua rodando e o .vbs também é mantido.
+                    $RemoteScript = $null
+
+                    Write-Log `
+                        -Level Error `
+                        -Message "OffScrub timed out on $ComputerName after $TimeoutSeconds s; it may still be running (log: $($Plan.RemoteLogPath))"
+
+                    return & $NewResult $false $null $null "OffScrub timed out after $TimeoutSeconds seconds and may still be running on $ComputerName." $Result.Output $Duration $false
+                }
+
                 if ($Plan.InstallerType -ne 'MSI') {
                     $ProcessName = ($Plan.Executable -split '[\\/]')[-1]
 
@@ -1146,6 +1268,35 @@ function Uninstall-RemoteSoftware {
                 -Message "Error uninstalling software on $ComputerName`: $($_.Exception.Message)"
 
             return & $NewResult $false $null $null $_.Exception.Message $null $null $false
+        }
+        finally {
+            $RemoteCleanup = @($RemoteScript)
+
+            if ($Outcome.Success) {
+                $RemoteCleanup += $RemoteLogFolder
+            }
+            elseif ($RemoteLogFolder) {
+                Write-Log `
+                    -Level Info `
+                    -Message "OffScrub log kept on $ComputerName`: $($Plan.RemoteLogPath)"
+            }
+
+            foreach ($Path in $RemoteCleanup) {
+                if ([string]::IsNullOrWhiteSpace($Path)) {
+                    continue
+                }
+
+                try {
+                    if (Test-Path -LiteralPath $Path) {
+                        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+                    }
+                }
+                catch {
+                    Write-Log `
+                        -Level Warning `
+                        -Message "Could not remove remote file $Path`: $($_.Exception.Message)"
+                }
+            }
         }
     }
 }

@@ -647,6 +647,13 @@ function Invoke-SoftwareMenu {
 
                     $CustomArguments = ""
 
+                    # Office MSI: o OffScrub encerra os aplicativos do Office e é demorado
+                    if ($Plan.InstallerType -like '*(OffScrub)') {
+                        Write-Host ""
+                        Write-Status -Status Warning -Message "OffScrub fecha Word/Excel/Outlook à força e pode levar 20+ min."
+                        Write-Host "      Remove apenas o SKU $($Plan.Sku). Avise o usuário antes de continuar." -ForegroundColor Yellow
+                    }
+
                     if (-not $Plan.Silent) {
                         Write-Host ""
                         Write-Status -Status Warning -Message "No silent switch is known for this uninstaller."

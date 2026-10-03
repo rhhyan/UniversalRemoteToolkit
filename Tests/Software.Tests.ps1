@@ -269,6 +269,83 @@ Describe 'Resolve-UninstallCommand' {
     }
 }
 
+Describe 'Resolve-UninstallCommand (Office MSI / OffScrub)' {
+
+    BeforeAll {
+        # Bin\OffScrub falso: só o script do Office 2016 existe
+        $OffScrubDir = Join-Path $TestDrive 'OffScrub'
+        New-Item -ItemType Directory -Path $OffScrubDir -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $OffScrubDir 'OffScrub_O16msi.vbs') -Force | Out-Null
+
+        InModuleScope Software -Parameters @{ Dir = $OffScrubDir } {
+            param($Dir)
+            $script:OriginalOffScrub = $OFFSCRUB_PATH
+            $script:OFFSCRUB_PATH = $Dir
+        }
+
+        function New-OfficeEntry {
+            param($Version = '16', $Sku = 'PROPLUS', $Programs = 'Program Files (x86)')
+
+            [PSCustomObject]@{
+                Name            = "Microsoft Office $Sku"
+                KeyName         = "Office$Version.$Sku"
+                UninstallString = "`"C:\$Programs\Common Files\Microsoft Shared\OFFICE$Version\Office Setup Controller\setup.exe`" /uninstall $Sku /dll OSETUP.DLL"
+            }
+        }
+    }
+
+    AfterAll {
+        InModuleScope Software { $script:OFFSCRUB_PATH = $script:OriginalOffScrub }
+    }
+
+    It 'Office 2016 PROPLUS usa OffScrub só com o SKU' {
+        $Plan = Resolve-UninstallCommand -Software (New-OfficeEntry)
+
+        $Plan.InstallerType | Should -Be 'Office 2016 MSI (OffScrub)'
+        $Plan.Silent | Should -BeTrue
+        $Plan.Sku | Should -Be 'PROPLUS'
+        $Plan.Executable | Should -Be 'cscript.exe'
+        $Plan.Arguments | Should -Be '//nologo "C:\script_temp\OffScrub_O16msi.vbs" PROPLUS /Quiet /NoCancel /Force /Log "C:\script_temp\OffScrub"'
+        $Plan.Arguments | Should -Not -Match '\bALL\b'
+        $Plan.ScriptPath | Should -Be (Join-Path $OffScrubDir 'OffScrub_O16msi.vbs')
+    }
+
+    It 'extrai o SKU STANDARD' {
+        $Plan = Resolve-UninstallCommand -Software (New-OfficeEntry -Sku 'Standard')
+
+        $Plan.Sku | Should -Be 'STANDARD'
+        $Plan.Arguments | Should -Match '\.vbs" STANDARD /Quiet'
+    }
+
+    It 'Office 2013 sem OffScrub_O15msi.vbs continua Genérico' {
+        $Plan = Resolve-UninstallCommand -Software (New-OfficeEntry -Version '15' -Programs 'Program Files')
+
+        $Plan.InstallerType | Should -Be 'Generic'
+        $Plan.Silent | Should -BeFalse
+    }
+
+    It 'Office 2013 usa OffScrub quando o script existe' {
+        $O15 = Join-Path $OffScrubDir 'OffScrub_O15msi.vbs'
+        New-Item -ItemType File -Path $O15 -Force | Out-Null
+
+        try {
+            $Plan = Resolve-UninstallCommand -Software (New-OfficeEntry -Version '15' -Programs 'Program Files')
+        }
+        finally {
+            Remove-Item -LiteralPath $O15 -Force
+        }
+
+        $Plan.InstallerType | Should -Be 'Office 2013 MSI (OffScrub)'
+        $Plan.Arguments | Should -Match 'OffScrub_O15msi\.vbs" PROPLUS '
+    }
+
+    It 'setup.exe de outro programa não é tratado como Office' {
+        $Plan = Resolve-UninstallCommand -Software ([PSCustomObject]@{ KeyName = 'X'; UninstallString = '"C:\X\setup.exe" /uninstall PROPLUS' })
+
+        $Plan.InstallerType | Should -Be 'Generic'
+    }
+}
+
 Describe 'Uninstall-RemoteSoftware' {
 
     BeforeAll {
@@ -377,6 +454,148 @@ Describe 'Uninstall-RemoteSoftware' {
 
         $Result.Success | Should -BeFalse
         $Result.Error | Should -Match 'No uninstall command'
+    }
+}
+
+Describe 'Uninstall-RemoteSoftware (Office MSI / OffScrub)' {
+
+    BeforeAll {
+        $OffScrubDir = Join-Path $TestDrive 'OffScrubBin'
+        New-Item -ItemType Directory -Path $OffScrubDir -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $OffScrubDir 'OffScrub_O16msi.vbs') -Force | Out-Null
+
+        InModuleScope Software -Parameters @{ Dir = $OffScrubDir } {
+            param($Dir)
+            $script:OriginalOffScrub = $OFFSCRUB_PATH
+            $script:OFFSCRUB_PATH = $Dir
+        }
+
+        # Pasta que faz o papel de \\PC\C$\script_temp
+        $script:RemoteDir = Join-Path $TestDrive 'remote'
+
+        $script:Office = [PSCustomObject]@{
+            Name            = 'Microsoft Office Professional Plus 2016'
+            KeyName         = 'Office16.PROPLUS'
+            Scope           = 'Machine'
+            UninstallString = '"C:\Program Files (x86)\Common Files\Microsoft Shared\OFFICE16\Office Setup Controller\setup.exe" /uninstall PROPLUS /dll OSETUP.DLL'
+            RegistryPath    = 'Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Office16.PROPLUS'
+        }
+    }
+
+    AfterAll {
+        InModuleScope Software { $script:OFFSCRUB_PATH = $script:OriginalOffScrub }
+    }
+
+    BeforeEach {
+        # Simula a cópia: cria o .vbs e a pasta de log "remotos"
+        New-Item -ItemType Directory -Path (Join-Path $RemoteDir 'OffScrub') -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $RemoteDir 'OffScrub_O16msi.vbs') -Force | Out-Null
+
+        Mock -ModuleName Software Start-Sleep { }
+        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -ExitCode 0 }
+        Mock -ModuleName Software Test-RemoteSoftwareInstalled { $false }
+        Mock -ModuleName Software Copy-SoftwareToRemote {
+            [PSCustomObject]@{ Success = $true; RemotePath = (Join-Path $RemoteDir 'OffScrub_O16msi.vbs') }
+        }
+    }
+
+    It 'copia o script, executa com timeout de 3600 s, verifica e limpa' {
+        $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $Office
+
+        $Result.Success | Should -BeTrue
+        $Result.Verified | Should -BeTrue
+        $Result.RebootRequired | Should -BeFalse
+        $Result.UninstallerType | Should -Be 'Office 2016 MSI (OffScrub)'
+
+        Should -Invoke -ModuleName Software Copy-SoftwareToRemote -Times 1 -ParameterFilter {
+            $ComputerName -eq 'PC' -and $InstallerPath -eq (Join-Path $OffScrubDir 'OffScrub_O16msi.vbs')
+        }
+        Should -Invoke -ModuleName Software Invoke-PsExecCommand -Times 1 -ParameterFilter {
+            $Executable -eq 'cscript.exe' -and
+            $Arguments -eq '//nologo "C:\script_temp\OffScrub_O16msi.vbs" PROPLUS /Quiet /NoCancel /Force /Log "C:\script_temp\OffScrub"' -and
+            $TimeoutSeconds -eq 3600
+        }
+
+        Join-Path $RemoteDir 'OffScrub_O16msi.vbs' | Should -Not -Exist
+        Join-Path $RemoteDir 'OffScrub' | Should -Not -Exist
+    }
+
+    It 'respeita -TimeoutSeconds informado' {
+        Uninstall-RemoteSoftware -ComputerName 'PC' -Software $Office -TimeoutSeconds 120 | Out-Null
+
+        Should -Invoke -ModuleName Software Invoke-PsExecCommand -ParameterFilter { $TimeoutSeconds -eq 120 }
+    }
+
+    It 'exit code <Code>: sucesso=<Ok>, reboot=<Reboot>' -ForEach @(
+        @{ Code = 2;    Ok = $true;  Reboot = $true }
+        @{ Code = 32;   Ok = $true;  Reboot = $true }
+        @{ Code = 8;    Ok = $true;  Reboot = $false }
+        @{ Code = 10;   Ok = $true;  Reboot = $true }
+        @{ Code = 3010; Ok = $true;  Reboot = $true }
+        @{ Code = 1;    Ok = $false; Reboot = $false }
+        @{ Code = 25;   Ok = $false; Reboot = $false }
+        @{ Code = -1073741510; Ok = $false; Reboot = $false }
+    ) {
+        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -ExitCode $Code }
+
+        # Na falha o programa continua registrado
+        if (-not $Ok) {
+            Mock -ModuleName Software Test-RemoteSoftwareInstalled { $true }
+        }
+
+        $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $Office
+
+        $Result.Success | Should -Be $Ok
+        $Result.RebootRequired | Should -Be $Reboot
+        $Result.ExitCode | Should -Be $Code
+
+        # O .vbs sempre é apagado; a pasta de log só no sucesso
+        Join-Path $RemoteDir 'OffScrub_O16msi.vbs' | Should -Not -Exist
+
+        if ($Ok) {
+            Join-Path $RemoteDir 'OffScrub' | Should -Not -Exist
+        }
+        else {
+            Join-Path $RemoteDir 'OffScrub' | Should -Exist
+            $Result.Error | Should -BeLike '*Check the OffScrub log in C:\script_temp\OffScrub.'
+        }
+    }
+
+    It 'falha sem verificação de registro também mantém o log' {
+        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -ExitCode 1 -ErrorText 'OffScrub failed' }
+
+        $NoRegistry = $Office.PSObject.Copy()
+        $NoRegistry.RegistryPath = $null
+
+        $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $NoRegistry
+
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -Be 'OffScrub failed. Check the OffScrub log in C:\script_temp\OffScrub.'
+        Join-Path $RemoteDir 'OffScrub_O16msi.vbs' | Should -Not -Exist
+        Join-Path $RemoteDir 'OffScrub' | Should -Exist
+    }
+
+    It 'falha na cópia não executa nada' {
+        Mock -ModuleName Software Copy-SoftwareToRemote { [PSCustomObject]@{ Success = $false; Error = 'Access denied' } }
+
+        $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $Office
+
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -Match 'Access denied'
+        Should -Invoke -ModuleName Software Invoke-PsExecCommand -Times 0
+    }
+
+    It 'no timeout não mata o OffScrub nem apaga os arquivos' {
+        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -ExitCode $null -TimedOut }
+
+        $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $Office
+
+        $Result.Success | Should -BeFalse
+        $Result.Error | Should -Match 'may still be running'
+        $Result.Error | Should -BeLike '*Check the OffScrub log in C:\script_temp\OffScrub.'
+        Should -Invoke -ModuleName Software Invoke-PsExecCommand -Times 1
+        Join-Path $RemoteDir 'OffScrub_O16msi.vbs' | Should -Exist
+        Join-Path $RemoteDir 'OffScrub' | Should -Exist
     }
 }
 
