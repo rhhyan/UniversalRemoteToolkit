@@ -449,6 +449,111 @@ function Install-RemoteSoftware {
 }
 
 # ============================================================
+# INSTALL SOFTWARE FROM REPOSITORY (copy -> install -> cleanup)
+# ============================================================
+
+<#
+.SYNOPSIS
+    Copies an installer to a remote computer, installs it and removes the copy.
+
+.DESCRIPTION
+    Runs the whole installation workflow:
+      1. Copy-SoftwareToRemote  (ping + copy to Software.RemoteTempPath)
+      2. Install-RemoteSoftware (silent defaults for .msi)
+      3. Removes the copied installer, even when the installation fails
+
+    Stage tells where the workflow stopped: 'Copy' when the installer
+    could not be copied (nothing was executed), 'Install' otherwise.
+
+.PARAMETER ComputerName
+    Name of the remote computer.
+
+.PARAMETER InstallerPath
+    Installer in the repository (e.g. \\server\apps\setup.msi).
+
+.PARAMETER Arguments
+    Optional arguments to pass to the installer.
+
+.PARAMETER TimeoutSeconds
+    Maximum execution time in seconds (default: Software.DefaultInstallTimeout).
+
+.OUTPUTS
+    System.Object
+    The Install-RemoteSoftware result plus Stage, or a copy failure result.
+
+.EXAMPLE
+    Invoke-SoftwareInstallation -ComputerName "PC-001" -InstallerPath "\\server\apps\7zip.msi"
+#>
+function Invoke-SoftwareInstallation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$InstallerPath,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Arguments = "",
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 86400)]
+        [int]$TimeoutSeconds
+    )
+
+    process {
+        $Copy = Copy-SoftwareToRemote `
+            -ComputerName $ComputerName `
+            -InstallerPath $InstallerPath
+
+        if (-not $Copy.Success) {
+            return [PSCustomObject]@{
+                Success       = $false
+                Stage         = 'Copy'
+                ComputerName  = $ComputerName
+                InstallerPath = $InstallerPath
+                Error         = $Copy.Error
+                Timestamp     = Get-Date
+            }
+        }
+
+        try {
+            $InstallParams = @{
+                ComputerName  = $ComputerName
+                InstallerPath = $Copy.LocalPathOnly
+                Arguments     = $Arguments
+            }
+
+            if ($PSBoundParameters.ContainsKey('TimeoutSeconds')) {
+                $InstallParams.TimeoutSeconds = $TimeoutSeconds
+            }
+
+            $Result = Install-RemoteSoftware @InstallParams
+            $Result | Add-Member -NotePropertyName Stage -NotePropertyValue 'Install' -Force
+
+            return $Result
+        }
+        finally {
+            # Remove o instalador copiado para a pasta temporária remota
+            try {
+                Remove-Item -Path $Copy.RemotePath -Force -ErrorAction Stop
+
+                Write-Log `
+                    -Level Info `
+                    -Message "Removed remote installer: $($Copy.RemotePath)"
+            }
+            catch {
+                Write-Log `
+                    -Level Warning `
+                    -Message "Could not remove remote installer $($Copy.RemotePath): $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+# ============================================================
 # GET INSTALLED SOFTWARE
 # ============================================================
 
@@ -1331,6 +1436,7 @@ Export-ModuleMember -Function @(
     'Find-SoftwareInstaller'
     'Copy-SoftwareToRemote'
     'Install-RemoteSoftware'
+    'Invoke-SoftwareInstallation'
     'Get-InstalledSoftware'
     'Get-SoftwareUninstallCommand'
     'Resolve-UninstallCommand'

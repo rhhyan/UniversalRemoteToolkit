@@ -226,6 +226,80 @@ Describe 'Install-RemoteSoftware' {
     }
 }
 
+Describe 'Invoke-SoftwareInstallation' {
+
+    BeforeEach {
+        Mock -ModuleName Software Copy-SoftwareToRemote {
+            [PSCustomObject]@{
+                Success       = $true
+                RemotePath    = '\\PC\C$\script_temp\App Setup.msi'
+                LocalPathOnly = 'C:\script_temp\App Setup.msi'
+            }
+        }
+        Mock -ModuleName Software Install-RemoteSoftware {
+            [PSCustomObject]@{ Success = $true; ComputerName = $ComputerName; ExitCode = 0; RebootRequired = $false }
+        }
+        Mock -ModuleName Software Remove-Item { }
+    }
+
+    It 'copia, instala pelo caminho remoto e apaga o instalador' {
+        $Result = Invoke-SoftwareInstallation -ComputerName 'PC' -InstallerPath '\\srv\apps\App Setup.msi' -Arguments '/quiet'
+
+        $Result.Success | Should -BeTrue
+        $Result.Stage | Should -Be 'Install'
+
+        Should -Invoke -ModuleName Software Install-RemoteSoftware -Times 1 -ParameterFilter {
+            $InstallerPath -eq 'C:\script_temp\App Setup.msi' -and $Arguments -eq '/quiet' -and
+            -not $PesterBoundParameters.ContainsKey('TimeoutSeconds')
+        }
+        Should -Invoke -ModuleName Software Remove-Item -Times 1 -ParameterFilter { $Path -eq '\\PC\C$\script_temp\App Setup.msi' }
+    }
+
+    It 'repassa -TimeoutSeconds só quando informado' {
+        Invoke-SoftwareInstallation -ComputerName 'PC' -InstallerPath '\\srv\apps\a.exe' -TimeoutSeconds 900 | Out-Null
+
+        Should -Invoke -ModuleName Software Install-RemoteSoftware -ParameterFilter { $TimeoutSeconds -eq 900 }
+    }
+
+    It 'falha na cópia: Stage = Copy, sem instalar nem apagar' {
+        Mock -ModuleName Software Copy-SoftwareToRemote { [PSCustomObject]@{ Success = $false; Error = "Computer 'PC' is not reachable." } }
+
+        $Result = Invoke-SoftwareInstallation -ComputerName 'PC' -InstallerPath '\\srv\apps\a.exe'
+
+        $Result.Success | Should -BeFalse
+        $Result.Stage | Should -Be 'Copy'
+        $Result.Error | Should -Be "Computer 'PC' is not reachable."
+        Should -Invoke -ModuleName Software Install-RemoteSoftware -Times 0
+        Should -Invoke -ModuleName Software Remove-Item -Times 0
+    }
+
+    It 'apaga o instalador também quando a instalação falha' {
+        Mock -ModuleName Software Install-RemoteSoftware { [PSCustomObject]@{ Success = $false; ExitCode = 1603; Error = 'falhou' } }
+
+        $Result = Invoke-SoftwareInstallation -ComputerName 'PC' -InstallerPath '\\srv\apps\a.exe'
+
+        $Result.Success | Should -BeFalse
+        $Result.Stage | Should -Be 'Install'
+        $Result.ExitCode | Should -Be 1603
+        Should -Invoke -ModuleName Software Remove-Item -Times 1
+    }
+
+    It 'apaga o instalador mesmo se a instalação lançar exceção' {
+        Mock -ModuleName Software Install-RemoteSoftware { throw 'inesperado' }
+
+        { Invoke-SoftwareInstallation -ComputerName 'PC' -InstallerPath '\\srv\apps\a.exe' } | Should -Throw '*inesperado*'
+        Should -Invoke -ModuleName Software Remove-Item -Times 1
+    }
+
+    It 'não apagar o instalador não muda o resultado' {
+        Mock -ModuleName Software Remove-Item { throw 'Access denied' }
+
+        $Result = Invoke-SoftwareInstallation -ComputerName 'PC' -InstallerPath '\\srv\apps\a.exe'
+
+        $Result.Success | Should -BeTrue
+    }
+}
+
 Describe 'Get-InstalledSoftware' {
 
     It 'converte a lista JSON ignorando texto antes e depois' {

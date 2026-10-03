@@ -471,46 +471,24 @@ function Invoke-SoftwareMenu {
 
                     Write-Status -Status Success -Message "Installer found: $($Installer.Name)"
 
-                    # Step 2: Copy to remote
-                    Write-Status -Status Running -Message "Copying installer to $Computer..."
-                    $CopyResult = Copy-SoftwareToRemote `
-                        -ComputerName $Computer `
-                        -InstallerPath $Installer.FullPath
-
-                    if (-not $CopyResult.Success) {
-                        Show-ExecutionResult `
-                            -Status Error `
-                            -Message "Failed to copy installer" `
-                            -Details $CopyResult.Error
-                        continue
-                    }
-
-                    Write-Status -Status Success -Message "Installer copied successfully"
-
-                    # Step 3: Optional arguments
+                    # Step 2: Optional arguments
                     Write-Host ""
                     $Arguments = Read-UserInput -Prompt "Installation arguments (optional)"
 
-                    # Step 4: Execute installation
+                    # Step 3: Copy, install and remove the remote installer
                     Write-Host ""
                     Write-Status -Status Running -Message "Installing software on $Computer..."
-                    $InstallResult = Install-RemoteSoftware `
+                    $InstallResult = Invoke-SoftwareInstallation `
                         -ComputerName $Computer `
-                        -InstallerPath $CopyResult.LocalPathOnly `
+                        -InstallerPath $Installer.FullPath `
                         -Arguments $Arguments
 
-                    # Step 5: Remove the copied installer from the remote temp folder
-                    try {
-                        Remove-Item -Path $CopyResult.RemotePath -Force -ErrorAction Stop
-
-                        Write-Log `
-                            -Level Info `
-                            -Message "Removed remote installer: $($CopyResult.RemotePath)"
-                    }
-                    catch {
-                        Write-Log `
-                            -Level Warning `
-                            -Message "Could not remove remote installer $($CopyResult.RemotePath): $($_.Exception.Message)"
+                    if ($InstallResult.Stage -eq 'Copy') {
+                        Show-ExecutionResult `
+                            -Status Error `
+                            -Message "Failed to copy installer" `
+                            -Details $InstallResult.Error
+                        continue
                     }
 
                     if ($InstallResult.Success) {
