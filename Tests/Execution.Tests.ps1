@@ -99,7 +99,6 @@ Describe 'Invoke-PsExecProcess' {
 Describe 'Invoke-PsExecCommand' {
 
     BeforeEach {
-        Mock -ModuleName Execution Test-PsExecInstalled { $true }
         Mock -ModuleName Execution Test-ComputerReachable { $true }
         Mock -ModuleName Execution Get-PsExecPath { 'C:\fake\PsExec.exe' }
         Mock -ModuleName Execution Invoke-PsExecProcess {
@@ -127,8 +126,40 @@ Describe 'Invoke-PsExecCommand' {
         }
     }
 
+    It 'localiza o PsExec uma vez só' {
+        Invoke-PsExecCommand -ComputerName 'PC' -Executable 'cmd.exe' | Out-Null
+
+        Should -Invoke -ModuleName Execution Get-PsExecPath -Times 1 -Exactly
+    }
+
+    It 'exit code diferente de 0 é registrado como Info (o chamador decide se é falha)' {
+        Mock -ModuleName Execution Write-Log { }
+        Mock -ModuleName Execution Invoke-PsExecProcess {
+            [PSCustomObject]@{ Success = $false; ExitCode = 3010; TimedOut = $false; Output = ''; Error = '' }
+        }
+
+        $Result = Invoke-PsExecCommand -ComputerName 'PC' -Executable 'msiexec.exe'
+
+        $Result.ExitCode | Should -Be 3010
+        Should -Invoke -ModuleName Execution Write-Log -Times 0 -ParameterFilter { $Level -eq 'Error' }
+        Should -Invoke -ModuleName Execution Write-Log -Times 1 -ParameterFilter {
+            $Level -eq 'Info' -and $Message -match 'finished with exit code 3010'
+        }
+    }
+
+    It 'timeout continua registrado como Error' {
+        Mock -ModuleName Execution Write-Log { }
+        Mock -ModuleName Execution Invoke-PsExecProcess {
+            [PSCustomObject]@{ Success = $false; ExitCode = $null; TimedOut = $true; Output = ''; Error = '' }
+        }
+
+        Invoke-PsExecCommand -ComputerName 'PC' -Executable 'cmd.exe' | Out-Null
+
+        Should -Invoke -ModuleName Execution Write-Log -Times 1 -ParameterFilter { $Level -eq 'Error' -and $Message -match 'timed out' }
+    }
+
     It 'não executa quando o PsExec não existe' {
-        Mock -ModuleName Execution Test-PsExecInstalled { $false }
+        Mock -ModuleName Execution Get-PsExecPath { $null }
 
         $Result = Invoke-PsExecCommand -ComputerName 'PC' -Executable 'cmd.exe'
 
@@ -233,5 +264,34 @@ Describe 'Copy-FileToRemote' {
 
         $Result.Success | Should -BeFalse
         $Result.Error | Should -Match 'absolute local path'
+    }
+}
+
+Describe 'Invoke-RemotePowerShell' {
+
+    BeforeEach {
+        Mock -ModuleName Execution Invoke-PsExecCommand {
+            [PSCustomObject]@{ Success = $true; ExitCode = 0; Output = 'ok' }
+        }
+    }
+
+    It 'envia o script como -EncodedCommand (UTF-16 Base64) e devolve o resultado' {
+        $Script = "if (Test-Path -LiteralPath 'HKLM:\x\O''Brien') { 'PRESENT' } else { `"ABSENT`" }"
+
+        $Result = Invoke-RemotePowerShell -ComputerName 'PC' -ScriptText $Script -TimeoutSeconds 30
+
+        $Result.Output | Should -Be 'ok'
+        Should -Invoke -ModuleName Execution Invoke-PsExecCommand -Times 1 -ParameterFilter {
+            $Executable -eq 'powershell.exe' -and
+            $TimeoutSeconds -eq 30 -and
+            $Arguments -match '^-NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand (?<B64>[A-Za-z0-9+/=]+)$' -and
+            [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches.B64)) -eq $Script
+        }
+    }
+
+    It 'timeout padrão de 60 s' {
+        Invoke-RemotePowerShell -ComputerName 'PC' -ScriptText 'Get-Date' | Out-Null
+
+        Should -Invoke -ModuleName Execution Invoke-PsExecCommand -ParameterFilter { $TimeoutSeconds -eq 60 }
     }
 }

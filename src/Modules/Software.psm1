@@ -633,16 +633,10 @@ try {
 }
 '@
 
-            # Executa o script remotamente
-            # Escapar o script para ser transmitido via PsExec
-            $EncodedScript = [Convert]::ToBase64String(
-                [Text.Encoding]::Unicode.GetBytes($QueryScript)
-            )
-            
-            $Result = Invoke-PsExecCommand `
+            # Executa o script remotamente (enviado como -EncodedCommand)
+            $Result = Invoke-RemotePowerShell `
                 -ComputerName $ComputerName `
-                -Executable "powershell.exe" `
-                -Arguments "-NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand $EncodedScript"
+                -ScriptText $QueryScript
 
             if ($Result.Success) {
                 try {
@@ -1042,14 +1036,9 @@ function Test-RemoteSoftwareInstalled {
     $EscapedPath = $RegistryPath -replace "'", "''"
     $Script = "if (Test-Path -LiteralPath '$EscapedPath') { 'PRESENT' } else { 'ABSENT' }"
 
-    $EncodedScript = [Convert]::ToBase64String(
-        [Text.Encoding]::Unicode.GetBytes($Script)
-    )
-
-    $Result = Invoke-PsExecCommand `
+    $Result = Invoke-RemotePowerShell `
         -ComputerName $ComputerName `
-        -Executable "powershell.exe" `
-        -Arguments "-NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand $EncodedScript"
+        -ScriptText $Script
 
     if ($Result.Output -match 'ABSENT') {
         return $false

@@ -383,8 +383,10 @@ function Invoke-PsExecCommand {
                 -Level Info `
                 -Message "Starting remote execution on $ComputerName."
 
-            # Validate PsExec.
-            if (-not (Test-PsExecInstalled)) {
+            # Locate PsExec ($null when it does not exist).
+            $PsExecPath = Get-PsExecPath
+
+            if (-not $PsExecPath) {
                 throw "PsExec executable was not found."
             }
 
@@ -392,9 +394,6 @@ function Invoke-PsExecCommand {
             if (-not (Test-ComputerReachable -ComputerName $ComputerName)) {
                 throw "Computer '$ComputerName' is not reachable."
             }
-
-            # Get PsExec path.
-            $PsExecPath = Get-PsExecPath
 
             # Build PsExec arguments.
             $FinalArguments = Build-PsExecArguments `
@@ -426,9 +425,12 @@ function Invoke-PsExecCommand {
                     -Message "Execution timed out on $ComputerName."
             }
             else {
+                # Exit code diferente de 0 nem sempre é falha (3010 = reiniciar,
+                # exit 2 = sucesso parcial nos Scripts, bitmask do OffScrub):
+                # quem chamou decide e registra o resultado.
                 Write-Log `
-                    -Level Error `
-                    -Message "Execution failed on $ComputerName with exit code $($ProcessResult.ExitCode)."
+                    -Level Info `
+                    -Message "Execution on $ComputerName finished with exit code $($ProcessResult.ExitCode)."
             }
 
             [PSCustomObject]@{
@@ -463,6 +465,61 @@ function Invoke-PsExecCommand {
         finally {
             $Stopwatch.Stop()
         }
+    }
+}
+
+<#
+.SYNOPSIS
+Runs a PowerShell script text on a remote computer.
+
+.DESCRIPTION
+Invoke-RemotePowerShell encodes the script as -EncodedCommand (UTF-16
+Base64), so quotes and special characters reach the remote
+powershell.exe unchanged, and runs it through Invoke-PsExecCommand.
+
+.PARAMETER ComputerName
+Specifies the name of the remote computer.
+
+.PARAMETER ScriptText
+Specifies the PowerShell code to run. Its output is returned in Output.
+
+.PARAMETER TimeoutSeconds
+Specifies the maximum execution time in seconds (default: 60).
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+
+The Invoke-PsExecCommand result.
+
+.EXAMPLE
+Invoke-RemotePowerShell -ComputerName "PC-001" -ScriptText "Get-Date"
+#>
+function Invoke-RemotePowerShell {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ScriptText,
+
+        [Parameter()]
+        [ValidateRange(1, 86400)]
+        [int]$TimeoutSeconds = 60
+    )
+
+    process {
+        $EncodedScript = [Convert]::ToBase64String(
+            [Text.Encoding]::Unicode.GetBytes($ScriptText)
+        )
+
+        Invoke-PsExecCommand `
+            -ComputerName $ComputerName `
+            -Executable "powershell.exe" `
+            -Arguments "-NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand $EncodedScript" `
+            -TimeoutSeconds $TimeoutSeconds
     }
 }
 
@@ -595,5 +652,6 @@ function Copy-FileToRemote {
 # Funções não listadas aqui são internas do módulo
 Export-ModuleMember -Function @(
     'Invoke-PsExecCommand'
+    'Invoke-RemotePowerShell'
     'Copy-FileToRemote'
 )

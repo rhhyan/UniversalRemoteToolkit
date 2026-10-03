@@ -308,7 +308,7 @@ Describe 'Get-InstalledSoftware' {
             [PSCustomObject]@{ Name = 'Google Chrome'; Version = '120' }
         ) | ConvertTo-Json
 
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -Output "aviso qualquer`n$Json`nfim" }
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -Output "aviso qualquer`n$Json`nfim" }
 
         $Apps = @(Get-InstalledSoftware -ComputerName 'PC')
 
@@ -319,7 +319,7 @@ Describe 'Get-InstalledSoftware' {
     It 'aceita um único programa (objeto JSON), mesmo com colchetes no nome' {
         $Json = [PSCustomObject]@{ Name = 'Driver [x64]'; Version = '1.0' } | ConvertTo-Json
 
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -Output $Json }
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -Output $Json }
 
         $Apps = @(Get-InstalledSoftware -ComputerName 'PC')
 
@@ -328,28 +328,28 @@ Describe 'Get-InstalledSoftware' {
     }
 
     It 'retorna lista vazia para [] ou saída vazia' {
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -Output '[]' }
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -Output '[]' }
         @(Get-InstalledSoftware -ComputerName 'PC') | Should -HaveCount 0
 
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -Output '' }
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -Output '' }
         @(Get-InstalledSoftware -ComputerName 'PC') | Should -HaveCount 0
     }
 
     It 'retorna lista vazia quando a execução falha ou a saída é inválida' {
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -ExitCode 1 -ErrorText 'Access denied' }
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -ExitCode 1 -ErrorText 'Access denied' }
         @(Get-InstalledSoftware -ComputerName 'PC') | Should -HaveCount 0
 
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -Output 'isso nao e json' }
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -Output 'isso nao e json' }
         @(Get-InstalledSoftware -ComputerName 'PC') | Should -HaveCount 0
     }
 
-    It 'envia o script como -EncodedCommand' {
-        Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -Output '[]' }
+    It 'consulta o registro pelo PowerShell remoto' {
+        Mock -ModuleName Software Invoke-RemotePowerShell { New-PsExecResult -Output '[]' }
 
         Get-InstalledSoftware -ComputerName 'PC' | Out-Null
 
-        Should -Invoke -ModuleName Software Invoke-PsExecCommand -ParameterFilter {
-            $Executable -eq 'powershell.exe' -and $Arguments -match '-EncodedCommand [A-Za-z0-9+/=]+$'
+        Should -Invoke -ModuleName Software Invoke-RemotePowerShell -Times 1 -ParameterFilter {
+            $ComputerName -eq 'PC' -and $ScriptText -match 'CurrentVersion\\Uninstall'
         }
     }
 }
@@ -755,13 +755,13 @@ Describe 'Test-RemoteSoftwareInstalled' {
 
     It 'interpreta PRESENT / ABSENT / resposta inválida' {
         InModuleScope Software {
-            Mock Invoke-PsExecCommand { [PSCustomObject]@{ Output = 'PRESENT' } }
+            Mock Invoke-RemotePowerShell { [PSCustomObject]@{ Output = 'PRESENT' } }
             Test-RemoteSoftwareInstalled -ComputerName 'PC' -RegistryPath "HKLM:\x\O'Brien" | Should -BeTrue
 
-            Mock Invoke-PsExecCommand { [PSCustomObject]@{ Output = 'ABSENT' } }
+            Mock Invoke-RemotePowerShell { [PSCustomObject]@{ Output = 'ABSENT' } }
             Test-RemoteSoftwareInstalled -ComputerName 'PC' -RegistryPath 'HKLM:\x' | Should -BeFalse
 
-            Mock Invoke-PsExecCommand { [PSCustomObject]@{ Output = '' } }
+            Mock Invoke-RemotePowerShell { [PSCustomObject]@{ Output = '' } }
             Test-RemoteSoftwareInstalled -ComputerName 'PC' -RegistryPath 'HKLM:\x' | Should -BeNullOrEmpty
         }
     }
