@@ -8,17 +8,10 @@
 # CONFIGURATION
 # ============================================================
 
-$Config = Get-ToolkitConfig
+# A configuração é lida pelas funções (Get-SoftwareSettings), não no import:
+# o módulo carrega mesmo sem o Settings.json e não depende da ordem de carga.
 
-$REPOSITORY_PATH = $Config.Software.RepositoryPath
-$TEMP_SCRIPT_PATH = if ($Config.Software.RemoteTempPath) { $Config.Software.RemoteTempPath } else { 'C:\script_temp' }
-$SUPPORTED_INSTALLERS = $Config.Software.SupportedInstallers
-
-$DEFAULT_INSTALL_TIMEOUT = $Config.Software.DefaultInstallTimeout
-$DEFAULT_UNINSTALL_TIMEOUT = $Config.Software.DefaultUninstallTimeout
-
-# Tempo máximo aguardando o programa sumir do registro após a desinstalação
-$VERIFY_TIMEOUT = if ($Config.Software.UninstallVerifyTimeout) { [int]$Config.Software.UninstallVerifyTimeout } else { 60 }
+# Intervalo entre as verificações do registro após a desinstalação
 $VERIFY_INTERVAL = 5
 
 $GUID_PATTERN = '\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}'
@@ -33,14 +26,45 @@ $REBOOT_EXIT_CODES = @(3010, 1641)
 # OffScrub (Microsoft): remove o Office MSI quando o Office Setup Controller
 # não consegue desinstalar em modo silencioso. Chave = versão (OFFICE16...).
 # Uma versão só é usada se o script existir em Bin\OffScrub.
-$OFFSCRUB_PATH = Join-Path (Get-ToolkitRoot) 'Bin/OffScrub'
 $OFFSCRUB_SCRIPTS = @{
     '16' = @{ Script = 'OffScrub_O16msi.vbs'; Type = 'Office 2016 MSI (OffScrub)' }
     '15' = @{ Script = 'OffScrub_O15msi.vbs'; Type = 'Office 2013 MSI (OffScrub)' }
 }
 
-# A varredura de componentes do OffScrub é lenta (~20 min observados)
-$OFFSCRUB_TIMEOUT = if ($Config.Software.OffScrubTimeout) { [int]$Config.Software.OffScrubTimeout } else { 3600 }
+<#
+.SYNOPSIS
+    Returns the Software settings (Settings.json) with their defaults.
+
+.DESCRIPTION
+    Private helper. Get-ToolkitConfig keeps the file cached, so calling
+    it from every function is cheap.
+#>
+function Get-SoftwareSettings {
+    [CmdletBinding()]
+    param()
+
+    $Software = (Get-ToolkitConfig).Software
+
+    $Default = {
+        param($Value, $Fallback)
+        if ($Value) { $Value } else { $Fallback }
+    }
+
+    [PSCustomObject]@{
+        RepositoryPath          = $Software.RepositoryPath
+        RemoteTempPath          = & $Default $Software.RemoteTempPath 'C:\script_temp'
+        SupportedInstallers     = @(& $Default $Software.SupportedInstallers @('.exe', '.msi', '.ps1'))
+        DefaultInstallTimeout   = [int](& $Default $Software.DefaultInstallTimeout 300)
+        DefaultUninstallTimeout = [int](& $Default $Software.DefaultUninstallTimeout 300)
+
+        # Tempo máximo aguardando o programa sumir do registro após a desinstalação
+        UninstallVerifyTimeout  = [int](& $Default $Software.UninstallVerifyTimeout 60)
+
+        # A varredura de componentes do OffScrub é lenta (~20 min observados)
+        OffScrubTimeout         = [int](& $Default $Software.OffScrubTimeout 3600)
+        OffScrubPath            = Join-Path (Get-ToolkitRoot) 'Bin/OffScrub'
+    }
+}
 
 # ============================================================
 # GET SOFTWARE REPOSITORY
@@ -80,20 +104,27 @@ function Get-SoftwareRepository {
 
     process {
         try {
+            $Settings = Get-SoftwareSettings
+            $RepositoryPath = $Settings.RepositoryPath
+
+            if ([string]::IsNullOrWhiteSpace($RepositoryPath)) {
+                throw "Software.RepositoryPath is not set in Settings.json"
+            }
+
             Write-Log `
                 -Level Info `
-                -Message "Scanning software repository: $REPOSITORY_PATH"
+                -Message "Scanning software repository: $RepositoryPath"
 
-            if (-not (Test-Path -Path $REPOSITORY_PATH)) {
-                throw "Repository not accessible: $REPOSITORY_PATH"
+            if (-not (Test-Path -Path $RepositoryPath)) {
+                throw "Repository not accessible: $RepositoryPath"
             }
 
             $Installers = @()
 
             # Procura por arquivos de instalação (até 5 níveis de profundidade)
-            foreach ($Extension in $SUPPORTED_INSTALLERS) {
+            foreach ($Extension in $Settings.SupportedInstallers) {
                 $Files = Get-ChildItem `
-                    -Path $REPOSITORY_PATH `
+                    -Path $RepositoryPath `
                     -Filter "*$Extension" `
                     -File `
                     -Recurse `
@@ -250,7 +281,7 @@ function Copy-SoftwareToRemote {
             $Copy = Copy-FileToRemote `
                 -ComputerName $ComputerName `
                 -SourcePath $InstallerPath `
-                -DestinationDirectory $TEMP_SCRIPT_PATH
+                -DestinationDirectory (Get-SoftwareSettings).RemoteTempPath
         }
 
         # Mantém os nomes de propriedades usados pelo menu de instalação
@@ -288,7 +319,7 @@ function Copy-SoftwareToRemote {
     Optional arguments to pass to the installer.
 
 .PARAMETER TimeoutSeconds
-    Maximum execution time in seconds (default: 300).
+    Maximum execution time in seconds (default: Software.DefaultInstallTimeout).
 
 .OUTPUTS
     System.Object
@@ -316,11 +347,15 @@ function Install-RemoteSoftware {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = $DEFAULT_INSTALL_TIMEOUT
+        [int]$TimeoutSeconds
     )
 
     process {
         try {
+            if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds')) {
+                $TimeoutSeconds = (Get-SoftwareSettings).DefaultInstallTimeout
+            }
+
             Write-Log `
                 -Level Info `
                 -Message "Installing software on $ComputerName from $InstallerPath"
@@ -809,10 +844,11 @@ function Resolve-UninstallCommand {
 
         if ($OfficeVersion -and $Sku -and $OFFSCRUB_SCRIPTS.ContainsKey($OfficeVersion)) {
             $OffScrub = $OFFSCRUB_SCRIPTS[$OfficeVersion]
-            $ScriptPath = Join-Path $OFFSCRUB_PATH $OffScrub.Script
+            $Settings = Get-SoftwareSettings
+            $ScriptPath = Join-Path $Settings.OffScrubPath $OffScrub.Script
 
             if (Test-Path -LiteralPath $ScriptPath) {
-                $RemoteTemp = $TEMP_SCRIPT_PATH.TrimEnd('\')
+                $RemoteTemp = $Settings.RemoteTempPath.TrimEnd('\')
                 $RemoteScript = "$RemoteTemp\$($OffScrub.Script)"
                 $RemoteLog = "$RemoteTemp\OffScrub"
 
@@ -985,7 +1021,7 @@ function Uninstall-RemoteSoftware {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 86400)]
-        [int]$TimeoutSeconds = $DEFAULT_UNINSTALL_TIMEOUT
+        [int]$TimeoutSeconds
     )
 
     process {
@@ -1040,6 +1076,12 @@ function Uninstall-RemoteSoftware {
         }
 
         try {
+            $Settings = Get-SoftwareSettings
+
+            if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds')) {
+                $TimeoutSeconds = $Settings.DefaultUninstallTimeout
+            }
+
             $Plan = Resolve-UninstallCommand -Software $Software
 
             if (-not [string]::IsNullOrWhiteSpace($Arguments)) {
@@ -1067,7 +1109,7 @@ function Uninstall-RemoteSoftware {
 
                 # Timeout próprio, a menos que o chamador tenha informado um
                 if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds')) {
-                    $TimeoutSeconds = $OFFSCRUB_TIMEOUT
+                    $TimeoutSeconds = $Settings.OffScrubTimeout
                 }
 
                 $Copy = Copy-SoftwareToRemote `
@@ -1203,7 +1245,7 @@ function Uninstall-RemoteSoftware {
                 }
 
                 Start-Sleep -Seconds $VERIFY_INTERVAL
-            } while ($VerifyWatch.Elapsed.TotalSeconds -lt $VERIFY_TIMEOUT)
+            } while ($VerifyWatch.Elapsed.TotalSeconds -lt $Settings.UninstallVerifyTimeout)
 
             if ($StillInstalled -eq $false) {
                 Write-Log `
@@ -1224,7 +1266,7 @@ function Uninstall-RemoteSoftware {
             }
 
             $Message = if ($ExitOk) {
-                "Uninstaller reported success, but the program is still registered after $VERIFY_TIMEOUT seconds."
+                "Uninstaller reported success, but the program is still registered after $($Settings.UninstallVerifyTimeout) seconds."
             }
             else {
                 "Uninstaller failed with exit code $($Result.ExitCode). $($Result.Error)".Trim()

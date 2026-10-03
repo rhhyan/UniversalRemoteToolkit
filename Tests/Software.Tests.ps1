@@ -17,6 +17,50 @@ BeforeAll {
             DurationMS = 10
         }
     }
+
+    # Troca valores do Get-SoftwareSettings (Settings.json) só no bloco atual;
+    # o Pester desfaz o mock ao sair do Describe/It
+    function Set-SoftwareSettingsMock {
+        param([Parameter(Mandatory)][hashtable]$Values)
+
+        $Settings = InModuleScope Software { Get-SoftwareSettings }
+
+        foreach ($Key in $Values.Keys) {
+            $Settings.$Key = $Values[$Key]
+        }
+
+        Mock -ModuleName Software Get-SoftwareSettings { $Settings }.GetNewClosure()
+    }
+}
+
+Describe 'Carregamento do módulo' {
+
+    It 'Software e Scripts carregam sem ler o Settings.json' {
+        $PS = [powershell]::Create()
+
+        try {
+            $null = $PS.AddScript({
+                param($ModulesPath)
+
+                # Se o import ler a configuração, estas funções lançam erro
+                function global:Get-ToolkitConfig { throw 'Settings.json lido no import' }
+                function global:Get-ToolkitRoot { throw 'Raiz lida no import' }
+
+                Import-Module (Join-Path $ModulesPath 'Software.psm1') -DisableNameChecking -ErrorAction Stop
+                Import-Module (Join-Path $ModulesPath 'Scripts.psm1') -DisableNameChecking -ErrorAction Stop
+                'ok'
+            }).AddArgument($ModulesPath)
+
+            $Output = $PS.Invoke()
+
+            # Erro no corpo do módulo não interrompe o Import-Module: vai para o stream de erros
+            @($PS.Streams.Error | ForEach-Object { "$_" }) | Should -BeNullOrEmpty
+            $Output | Should -Be 'ok'
+        }
+        finally {
+            $PS.Dispose()
+        }
+    }
 }
 
 Describe 'Get-SoftwareRepository / Find-SoftwareInstaller' {
@@ -29,15 +73,7 @@ Describe 'Get-SoftwareRepository / Find-SoftwareInstaller' {
         New-Item -ItemType File -Path (Join-Path $Repo 'setup.ps1') | Out-Null
         New-Item -ItemType File -Path (Join-Path $Repo 'leia-me.txt') | Out-Null
 
-        InModuleScope Software -Parameters @{ Repo = $Repo } {
-            param($Repo)
-            $script:OriginalRepo = $REPOSITORY_PATH
-            $script:REPOSITORY_PATH = $Repo
-        }
-    }
-
-    AfterAll {
-        InModuleScope Software { $script:REPOSITORY_PATH = $script:OriginalRepo }
+        Set-SoftwareSettingsMock @{ RepositoryPath = $Repo }
     }
 
     It 'lista apenas extensões suportadas, inclusive em subpastas' {
@@ -61,14 +97,15 @@ Describe 'Get-SoftwareRepository / Find-SoftwareInstaller' {
     }
 
     It 'lança erro quando o repositório está inacessível' {
-        InModuleScope Software { $script:REPOSITORY_PATH = Join-Path $TestDrive 'sem_repo' }
+        Set-SoftwareSettingsMock @{ RepositoryPath = (Join-Path $TestDrive 'sem_repo') }
 
-        try {
-            { Get-SoftwareRepository } | Should -Throw '*not accessible*'
-        }
-        finally {
-            InModuleScope Software -Parameters @{ Repo = $Repo } { param($Repo) $script:REPOSITORY_PATH = $Repo }
-        }
+        { Get-SoftwareRepository } | Should -Throw '*not accessible*'
+    }
+
+    It 'lança erro quando o repositório não está configurado' {
+        Set-SoftwareSettingsMock @{ RepositoryPath = $null }
+
+        { Get-SoftwareRepository } | Should -Throw '*RepositoryPath is not set*'
     }
 }
 
@@ -121,6 +158,14 @@ Describe 'Install-RemoteSoftware' {
 
     BeforeEach {
         Mock -ModuleName Software Invoke-PsExecCommand { New-PsExecResult -ExitCode 0 }
+    }
+
+    It 'timeout padrão vem de Software.DefaultInstallTimeout' {
+        Set-SoftwareSettingsMock @{ DefaultInstallTimeout = 123 }
+
+        Install-RemoteSoftware -ComputerName 'PC' -InstallerPath 'C:\script_temp\a.exe' | Out-Null
+
+        Should -Invoke -ModuleName Software Invoke-PsExecCommand -ParameterFilter { $TimeoutSeconds -eq 123 }
     }
 
     It 'MSI usa msiexec /i com /quiet /norestart por padrão' {
@@ -322,11 +367,7 @@ Describe 'Resolve-UninstallCommand (Office MSI / OffScrub)' {
         New-Item -ItemType Directory -Path $OffScrubDir -Force | Out-Null
         New-Item -ItemType File -Path (Join-Path $OffScrubDir 'OffScrub_O16msi.vbs') -Force | Out-Null
 
-        InModuleScope Software -Parameters @{ Dir = $OffScrubDir } {
-            param($Dir)
-            $script:OriginalOffScrub = $OFFSCRUB_PATH
-            $script:OFFSCRUB_PATH = $Dir
-        }
+        Set-SoftwareSettingsMock @{ OffScrubPath = $OffScrubDir }
 
         function New-OfficeEntry {
             param($Version = '16', $Sku = 'PROPLUS', $Programs = 'Program Files (x86)')
@@ -337,10 +378,6 @@ Describe 'Resolve-UninstallCommand (Office MSI / OffScrub)' {
                 UninstallString = "`"C:\$Programs\Common Files\Microsoft Shared\OFFICE$Version\Office Setup Controller\setup.exe`" /uninstall $Sku /dll OSETUP.DLL"
             }
         }
-    }
-
-    AfterAll {
-        InModuleScope Software { $script:OFFSCRUB_PATH = $script:OriginalOffScrub }
     }
 
     It 'Office 2016 PROPLUS usa OffScrub só com o SKU' {
@@ -421,6 +458,14 @@ Describe 'Uninstall-RemoteSoftware' {
         }
     }
 
+    It 'timeout padrão vem de Software.DefaultUninstallTimeout' {
+        Set-SoftwareSettingsMock @{ DefaultUninstallTimeout = 77 }
+
+        Uninstall-RemoteSoftware -ComputerName 'PC' -Software $App | Out-Null
+
+        Should -Invoke -ModuleName Software Invoke-PsExecCommand -ParameterFilter { $TimeoutSeconds -eq 77 }
+    }
+
     It 'aguarda o programa sumir do registro (desinstalador assíncrono)' {
         $script:Calls = 0
         Mock -ModuleName Software Test-RemoteSoftwareInstalled { $script:Calls++; $script:Calls -lt 3 }
@@ -433,14 +478,9 @@ Describe 'Uninstall-RemoteSoftware' {
 
     It 'falha quando o programa continua registrado após o tempo limite' {
         Mock -ModuleName Software Test-RemoteSoftwareInstalled { $true }
-        InModuleScope Software { $script:SavedVerify = $VERIFY_TIMEOUT; $script:VERIFY_TIMEOUT = 0 }
+        Set-SoftwareSettingsMock @{ UninstallVerifyTimeout = 0 }
 
-        try {
-            $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $App
-        }
-        finally {
-            InModuleScope Software { $script:VERIFY_TIMEOUT = $script:SavedVerify }
-        }
+        $Result = Uninstall-RemoteSoftware -ComputerName 'PC' -Software $App
 
         $Result.Success | Should -BeFalse
         $Result.Verified | Should -BeFalse
@@ -509,11 +549,7 @@ Describe 'Uninstall-RemoteSoftware (Office MSI / OffScrub)' {
         New-Item -ItemType Directory -Path $OffScrubDir -Force | Out-Null
         New-Item -ItemType File -Path (Join-Path $OffScrubDir 'OffScrub_O16msi.vbs') -Force | Out-Null
 
-        InModuleScope Software -Parameters @{ Dir = $OffScrubDir } {
-            param($Dir)
-            $script:OriginalOffScrub = $OFFSCRUB_PATH
-            $script:OFFSCRUB_PATH = $Dir
-        }
+        Set-SoftwareSettingsMock @{ OffScrubPath = $OffScrubDir }
 
         # Pasta que faz o papel de \\PC\C$\script_temp
         $script:RemoteDir = Join-Path $TestDrive 'remote'
@@ -525,10 +561,6 @@ Describe 'Uninstall-RemoteSoftware (Office MSI / OffScrub)' {
             UninstallString = '"C:\Program Files (x86)\Common Files\Microsoft Shared\OFFICE16\Office Setup Controller\setup.exe" /uninstall PROPLUS /dll OSETUP.DLL'
             RegistryPath    = 'Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Office16.PROPLUS'
         }
-    }
-
-    AfterAll {
-        InModuleScope Software { $script:OFFSCRUB_PATH = $script:OriginalOffScrub }
     }
 
     BeforeEach {

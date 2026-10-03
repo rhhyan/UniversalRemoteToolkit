@@ -12,10 +12,8 @@
 # Os .ps1 ficam em Modules\Scripts, ao lado deste modulo
 $SCRIPTS_LOCAL_PATH = Join-Path $PSScriptRoot 'Scripts'
 
-$Config = Get-ToolkitConfig
-
-$REMOTE_TEMP_PATH = if ($Config.Software.RemoteTempPath) { $Config.Software.RemoteTempPath } else { 'C:\script_temp' }
-$DEFAULT_KMS_HOST = if ($Config.Scripts.KmsHost) { $Config.Scripts.KmsHost } else { 'kmspw01.oi.corp.net' }
+# A configuracao e lida pelas funcoes (Get-ScriptsSettings), nao no import:
+# o modulo carrega mesmo sem o Settings.json e nao depende da ordem de carga.
 
 # Catalogo: adicionar novos scripts aqui
 $SCRIPT_CATALOG = [ordered]@{
@@ -28,6 +26,30 @@ $SCRIPT_CATALOG = [ordered]@{
         File           = 'Ativacao.ps1'
         Description    = 'Ativar Windows/Office (KMS)'
         TimeoutSeconds = 300
+    }
+}
+
+# ============================================================
+# SETTINGS
+# ============================================================
+
+<#
+.SYNOPSIS
+    Returns the Scripts settings (Settings.json) with their defaults.
+
+.DESCRIPTION
+    Private helper. Get-ToolkitConfig keeps the file cached, so calling
+    it from every function is cheap.
+#>
+function Get-ScriptsSettings {
+    [CmdletBinding()]
+    param()
+
+    $Config = Get-ToolkitConfig
+
+    [PSCustomObject]@{
+        RemoteTempPath = if ($Config.Software.RemoteTempPath) { $Config.Software.RemoteTempPath } else { 'C:\script_temp' }
+        KmsHost        = if ($Config.Scripts.KmsHost) { $Config.Scripts.KmsHost } else { 'kmspw01.oi.corp.net' }
     }
 }
 
@@ -99,7 +121,7 @@ function Copy-ScriptToRemote {
             $Copy = Copy-FileToRemote `
                 -ComputerName $ComputerName `
                 -SourcePath $ScriptPath `
-                -DestinationDirectory $REMOTE_TEMP_PATH
+                -DestinationDirectory (Get-ScriptsSettings).RemoteTempPath
         }
 
         # RemoteUnc = \\PC\C$\..., RemotePath = caminho na máquina remota
@@ -291,6 +313,9 @@ function Invoke-WindowsOptimization {
 .SYNOPSIS
     Activates Windows or Office against the corporate KMS, or shows status.
 
+.PARAMETER KmsHost
+    KMS server (host or host:port). Default: Scripts.KmsHost from Settings.json.
+
 .EXAMPLE
     Invoke-LicenseActivation -ComputerName "PC-001" -Target Office
 #>
@@ -307,14 +332,18 @@ function Invoke-LicenseActivation {
 
         [Parameter()]
         [ValidatePattern('^[A-Za-z0-9.-]+(:\d+)?$')]
-        [string]$KmsHost = $DEFAULT_KMS_HOST
+        [string]$KmsHost
     )
 
     process {
+        # Variável separada: o padrão do Settings.json não passa pelo
+        # ValidatePattern, como acontecia com o valor padrão do parâmetro
+        $Kms = if ($PSBoundParameters.ContainsKey('KmsHost')) { $KmsHost } else { (Get-ScriptsSettings).KmsHost }
+
         Invoke-RemoteToolkitScript `
             -ComputerName $ComputerName `
             -ScriptName 'Ativacao' `
-            -Arguments "-Target $Target -KmsHost $KmsHost"
+            -Arguments "-Target $Target -KmsHost $Kms"
     }
 }
 
