@@ -1,6 +1,7 @@
 ﻿# ============================================================
 # Universal Remote Toolkit
 # Main Application Entry Point
+# Depende de: Config, Logger, Execution, ConsoleUI, Utils, Software, Scripts
 # ============================================================
 
 [CmdletBinding()]

@@ -5,6 +5,7 @@
     as configurações do URT.
 #>
 
+# Depende de: (nenhum)
 
 # Configuração lida do disco na primeira chamada (Get-ToolkitConfig -Force relê)
 $script:ConfigCache = $null
@@ -81,3 +82,11 @@ function Resolve-ToolkitPath {
 
     [System.IO.Path]::GetFullPath((Join-Path (Get-ToolkitRoot) $Path))
 }
+
+
+# Funções não listadas aqui são internas do módulo
+Export-ModuleMember -Function @(
+    'Get-ToolkitConfig'
+    'Get-ToolkitRoot'
+    'Resolve-ToolkitPath'
+)

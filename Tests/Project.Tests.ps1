@@ -5,6 +5,11 @@ BeforeDiscovery {
 
     $script:SourceFiles = Get-ChildItem (Join-Path $RepoRoot 'src') -Recurse -Include *.ps1, *.psm1 |
         ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
+
+    # Módulos e script principal (os scripts remotos em Modules\Scripts são autônomos)
+    $script:ToolkitFiles = @(Get-ChildItem (Join-Path $RepoRoot 'src/Modules') -Filter *.psm1) +
+        @(Get-Item (Join-Path $RepoRoot 'src/UniversalRemoteToolkit.ps1')) |
+        ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
 }
 
 BeforeAll {
@@ -30,6 +35,73 @@ Describe 'Arquivos fonte' {
         if ($NonAscii) {
             $HasBom | Should -BeTrue
         }
+    }
+}
+
+Describe 'Dependências entre módulos' {
+
+    BeforeAll {
+        Import-ToolkitModules
+
+        $script:FunctionOwner = @{}   # função -> módulo que a define
+        $script:Exported = @{}        # módulo -> funções exportadas
+
+        foreach ($File in Get-ChildItem $ModulesPath -Filter *.psm1) {
+            $Module = $File.BaseName
+            $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
+
+            $Ast.EndBlock.Statements |
+                Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] } |
+                ForEach-Object { $script:FunctionOwner[$_.Name] = $Module }
+
+            $script:Exported[$Module] = @((Get-Module $Module).ExportedFunctions.Keys)
+        }
+
+        # Chamadas a funções de outros módulos, agrupadas pelo módulo chamado
+        function Get-ModuleCalls {
+            param([string]$Path)
+
+            $Self = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+            $Ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$null)
+
+            $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true) |
+                ForEach-Object { $_.GetCommandName() } |
+                Where-Object { $_ -and $script:FunctionOwner.ContainsKey($_) -and $script:FunctionOwner[$_] -ne $Self } |
+                Sort-Object -Unique |
+                ForEach-Object { [PSCustomObject]@{ Function = $_; Module = $script:FunctionOwner[$_] } }
+        }
+
+        # Lê "# Depende de: A, B" (ou "(nenhum)") do cabeçalho do arquivo
+        function Get-DeclaredDependencies {
+            param([string]$Path)
+
+            $Match = [regex]::Match((Get-Content $Path -Raw), '(?m)^#\s*Depende de:\s*(.+?)\s*$')
+
+            if (-not $Match.Success) {
+                throw "Cabeçalho '# Depende de:' não encontrado em $Path"
+            }
+
+            if ($Match.Groups[1].Value -eq '(nenhum)') {
+                return @()
+            }
+
+            @($Match.Groups[1].Value -split '\s*,\s*' | Sort-Object)
+        }
+    }
+
+    It '<Name> declara no cabeçalho exatamente os módulos que usa' -ForEach $ToolkitFiles {
+        $Used = @(Get-ModuleCalls -Path $Path | Select-Object -ExpandProperty Module | Sort-Object -Unique)
+        $Declared = Get-DeclaredDependencies -Path $Path
+
+        ($Used -join ', ') | Should -Be ($Declared -join ', ') -Because 'o cabeçalho "# Depende de:" deve refletir as chamadas reais'
+    }
+
+    It '<Name> só chama funções exportadas dos outros módulos' -ForEach $ToolkitFiles {
+        $Internal = @(Get-ModuleCalls -Path $Path |
+            Where-Object { $_.Function -notin $script:Exported[$_.Module] } |
+            ForEach-Object { "$($_.Module)\$($_.Function)" })
+
+        $Internal | Should -BeNullOrEmpty
     }
 }
 

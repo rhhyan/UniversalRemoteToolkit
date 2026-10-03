@@ -18,15 +18,15 @@ BeforeAll {
 Describe 'Format-CenteredText' {
 
     It 'centraliza com padding à esquerda' {
-        Format-CenteredText -Text 'ab' -Width 6 | Should -Be '  ab'
+        InModuleScope ConsoleUI { Format-CenteredText -Text 'ab' -Width 6 } | Should -Be '  ab'
     }
 
     It 'mantém texto maior que a largura' {
-        Format-CenteredText -Text 'abcdef' -Width 3 | Should -Be 'abcdef'
+        InModuleScope ConsoleUI { Format-CenteredText -Text 'abcdef' -Width 3 } | Should -Be 'abcdef'
     }
 
     It 'aceita texto vazio (só padding à esquerda)' {
-        Format-CenteredText -Text '' -Width 4 | Should -Be '  '
+        InModuleScope ConsoleUI { Format-CenteredText -Text '' -Width 4 } | Should -Be '  '
     }
 }
 

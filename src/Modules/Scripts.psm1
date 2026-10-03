@@ -3,6 +3,7 @@
 # Module: Scripts
 # Description: Catalogo e execucao remota de scripts de manutencao
 #              (Otimizacao do Windows, Ativacao Windows/Office)
+# Depende de: Config, Logger, Execution
 # ============================================================
 
 # ============================================================

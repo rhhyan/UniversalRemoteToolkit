@@ -30,30 +30,31 @@ BeforeAll {
     }
 }
 
+# Funções internas do módulo: chamadas com InModuleScope
 Describe 'Build-PsExecArguments' {
 
     It 'adiciona \\ ao nome e as opções -accepteula -nobanner' {
-        Build-PsExecArguments -ComputerName 'PC-001' -Executable 'cmd.exe' -Arguments '/c hostname' |
+        InModuleScope Execution { Build-PsExecArguments -ComputerName 'PC-001' -Executable 'cmd.exe' -Arguments '/c hostname' } |
             Should -Be '\\PC-001 -accepteula -nobanner cmd.exe /c hostname'
     }
 
     It 'não duplica \\ quando já informado' {
-        Build-PsExecArguments -ComputerName '\\PC-001' -Executable 'cmd.exe' |
+        InModuleScope Execution { Build-PsExecArguments -ComputerName '\\PC-001' -Executable 'cmd.exe' } |
             Should -Be '\\PC-001 -accepteula -nobanner cmd.exe'
     }
 
     It 'coloca aspas em executável com espaço' {
-        Build-PsExecArguments -ComputerName 'PC' -Executable 'C:\Program Files\App\app.exe' -Arguments '/S' |
+        InModuleScope Execution { Build-PsExecArguments -ComputerName 'PC' -Executable 'C:\Program Files\App\app.exe' -Arguments '/S' } |
             Should -Be '\\PC -accepteula -nobanner "C:\Program Files\App\app.exe" /S'
     }
 
     It 'não duplica aspas já existentes' {
-        Build-PsExecArguments -ComputerName 'PC' -Executable '"C:\Program Files\a.exe"' |
+        InModuleScope Execution { Build-PsExecArguments -ComputerName 'PC' -Executable '"C:\Program Files\a.exe"' } |
             Should -Be '\\PC -accepteula -nobanner "C:\Program Files\a.exe"'
     }
 
     It 'aplica -s e -i' {
-        Build-PsExecArguments -ComputerName 'PC' -Executable 'x.exe' -System -Interactive |
+        InModuleScope Execution { Build-PsExecArguments -ComputerName 'PC' -Executable 'x.exe' -System -Interactive } |
             Should -Be '\\PC -accepteula -nobanner -s -i x.exe'
     }
 }
@@ -61,7 +62,7 @@ Describe 'Build-PsExecArguments' {
 Describe 'Invoke-PsExecProcess' {
 
     It 'captura saída, erro e exit code 0' {
-        $Result = Invoke-PsExecProcess -PsExecPath $FakePsExec -ArgumentList '0' -TimeoutSeconds 10
+        $Result = InModuleScope Execution -Parameters @{ Exe = $FakePsExec } { param($Exe) Invoke-PsExecProcess -PsExecPath $Exe -ArgumentList '0' -TimeoutSeconds 10 }
 
         $Result.Success | Should -BeTrue
         $Result.ExitCode | Should -Be 0
@@ -71,7 +72,7 @@ Describe 'Invoke-PsExecProcess' {
     }
 
     It 'reporta falha com exit code diferente de zero' {
-        $Result = Invoke-PsExecProcess -PsExecPath $FakePsExec -ArgumentList '5' -TimeoutSeconds 10
+        $Result = InModuleScope Execution -Parameters @{ Exe = $FakePsExec } { param($Exe) Invoke-PsExecProcess -PsExecPath $Exe -ArgumentList '5' -TimeoutSeconds 10 }
 
         $Result.Success | Should -BeFalse
         $Result.ExitCode | Should -Be 5
@@ -79,7 +80,7 @@ Describe 'Invoke-PsExecProcess' {
 
     It 'encerra o processo no timeout' {
         $Watch = [System.Diagnostics.Stopwatch]::StartNew()
-        $Result = Invoke-PsExecProcess -PsExecPath $FakePsExec -ArgumentList 'sleep' -TimeoutSeconds 1
+        $Result = InModuleScope Execution -Parameters @{ Exe = $FakePsExec } { param($Exe) Invoke-PsExecProcess -PsExecPath $Exe -ArgumentList 'sleep' -TimeoutSeconds 1 }
 
         $Result.TimedOut | Should -BeTrue
         $Result.Success | Should -BeFalse
@@ -88,7 +89,9 @@ Describe 'Invoke-PsExecProcess' {
     }
 
     It 'lança erro quando o executável não existe' {
-        { Invoke-PsExecProcess -PsExecPath (Join-Path $TestDrive 'nada.exe') -ArgumentList 'x' } |
+        $Missing = Join-Path $TestDrive 'nada.exe'
+
+        { InModuleScope Execution -Parameters @{ Exe = $Missing } { param($Exe) Invoke-PsExecProcess -PsExecPath $Exe -ArgumentList 'x' } } |
             Should -Throw '*not found*'
     }
 }

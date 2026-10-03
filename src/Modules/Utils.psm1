@@ -2,6 +2,7 @@
 # Universal Remote Toolkit
 # Module: Utils
 # Description: Utility and helper functions
+# Depende de: (nenhum)
 # ============================================================
 
 function Test-IsAdministrator {

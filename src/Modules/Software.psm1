@@ -2,6 +2,7 @@
 # Universal Remote Toolkit
 # Module: Software Management
 # Description: Universal software installation and uninstallation
+# Depende de: Config, Logger, Execution
 # ============================================================
 
 # ============================================================

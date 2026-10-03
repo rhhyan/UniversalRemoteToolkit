@@ -4,6 +4,8 @@
     start logs URT
 #>
 
+# Depende de: Config
+
 function Remove-OldLogFiles {
 
     [CmdletBinding()]
@@ -225,3 +227,10 @@ function Stop-Log {
 
 }
 
+
+# Funções não listadas aqui são internas do módulo
+Export-ModuleMember -Function @(
+    'Start-Log'
+    'Write-Log'
+    'Stop-Log'
+)

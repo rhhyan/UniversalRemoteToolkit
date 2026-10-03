@@ -1,4 +1,6 @@
-﻿<#
+﻿# Depende de: Logger, Connection, Utils
+
+<#
 .SYNOPSIS
 Builds the argument string used to execute PsExec.
 
@@ -588,3 +590,10 @@ function Copy-FileToRemote {
         }
     }
 }
+
+
+# Funções não listadas aqui são internas do módulo
+Export-ModuleMember -Function @(
+    'Invoke-PsExecCommand'
+    'Copy-FileToRemote'
+)

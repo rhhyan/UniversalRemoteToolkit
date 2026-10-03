@@ -1,3 +1,5 @@
+# Depende de: Config
+
 <#
 .SYNOPSIS
     Locates the PsExec executable used by the Universal Remote Toolkit.

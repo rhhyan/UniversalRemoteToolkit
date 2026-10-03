@@ -1,5 +1,6 @@
 ﻿# ====================================================
 # ConsoleUI.psm1 - Sistema de Menu e Interface
+# Depende de: (nenhum)
 # ====================================================
 
 # Os símbolos são montados a partir de code points porque o Windows
@@ -640,3 +641,20 @@ function Show-ExecutionResult {
 
     Write-Host ""
 }
+
+
+# Funções não listadas aqui são internas do módulo
+Export-ModuleMember -Function @(
+    'Initialize-ConsoleUI'
+    'Show-Banner'
+    'Show-Section'
+    'Show-MainMenu'
+    'Read-MenuSelection'
+    'Read-UserInput'
+    'Read-Confirmation'
+    'Write-Status'
+    'Show-Properties'
+    'Read-ItemSelection'
+    'Wait-UserAcknowledge'
+    'Show-ExecutionResult'
+)
