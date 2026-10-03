@@ -24,7 +24,7 @@ All notable changes to this project will be documented here.
 
 ### Added
 
-- Testes automatizados com Pester (`Tests/`, 160 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
+- Testes automatizados com Pester (`Tests/`, 214 testes): todos os módulos, com chamadas remotas (PsExec, compartilhamentos) simuladas; inclui verificação de sintaxe e encoding e um teste ponta a ponta do menu principal. Executar com `Invoke-Pester ./Tests`
 - Menu Scripts (`Scripts.psm1`): execução remota de scripts de manutenção em uma ou várias máquinas, com resumo por computador
   - Otimização do Windows: limpeza de perfis + SFC, debloat, DISM, efeitos visuais e desativação de serviços
   - Ativação Windows/Office via KMS (`Scripts.KmsHost` no Settings.json) e consulta de status
@@ -41,7 +41,14 @@ All notable changes to this project will be documented here.
   - No timeout o OffScrub não é encerrado (interromper a limpeza deixaria o Office pela metade)
   - Menu avisa que o OffScrub fecha Word/Excel/Outlook à força e pode levar 20+ min
   - Office 2013 MSI (`OffScrub_O15msi.vbs`) usa a mesma lógica quando o script estiver em `Bin\OffScrub`
-- Remoção do instalador copiado para a máquina remota após a instalação
+  - Roda como SYSTEM (`PsExec -s`), como na validação manual
+- `Invoke-PsExecCommand -System` para executar como SYSTEM (o padrão continua sendo a conta do operador)
+- `Invoke-SoftwareInstallation`: copia o instalador, instala e apaga a cópia, mesmo quando a instalação falha
+- `Find-InstalledSoftware`: busca programas instalados pelo nome e devolve todos os resultados
+- `Invoke-RemotePowerShell`: executa um trecho de PowerShell na máquina remota via `-EncodedCommand`
+- `Copy-FileToRemote` e `ConvertTo-AdminSharePath`: cópia única para a pasta temporária remota (`C:\x` -> `\\PC\C$\x`), com ping antes da cópia
+- Teste de arquitetura: cada módulo declara `# Depende de:` no cabeçalho, e o teste falha se a declaração não bater com as chamadas reais ou se um módulo chamar função interna de outro
+- Remoção do instalador copiado para a máquina remota após a instalação (também quando ela falha)
 - Indicação de reinicialização pendente no resultado
 
 ### Fixed (desinstalação)
@@ -52,6 +59,21 @@ All notable changes to this project will be documented here.
 
 - `Paths.PsExec`, `Paths.Logs`, `Logs.EnableConsole` e `Network.PingTimeout` do Settings.json agora são respeitados
 - Ping com timeout configurável (máquinas offline falham rápido)
+- Instalação em máquina offline falha na hora ("not reachable"), em vez de esperar o timeout do SMB; nome do computador com `\\` também é aceito na instalação
+- Settings.json lido uma vez e mantido em cache (`Get-ToolkitConfig -Force` relê); antes era lido 3 vezes a cada comando remoto
+- Mensagem clara quando `Software.RepositoryPath` não está configurado; `RemoteTempPath` e os timeouts padrão têm valor padrão quando faltam no Settings.json
+
+### Changed (arquitetura)
+
+Revisão de arquitetura para que cada módulo tenha uma responsabilidade e dependa só do necessário.
+
+- Software e Scripts leem a configuração quando as funções rodam, não no import: os módulos carregam sem o Settings.json e o erro de configuração do script principal volta a aparecer formatado
+- Fluxo de instalação saiu do menu para `Invoke-SoftwareInstallation`. Na tela, o prompt "Installation arguments" vem logo após "Installer found" e a cópia não aparece mais como etapa separada
+- `Copy-SoftwareToRemote` e `Copy-ScriptToRemote` viraram wrappers de `Copy-FileToRemote`, mantendo as propriedades de retorno
+- Config, Logger, Execution e ConsoleUI têm `Export-ModuleMember`; funções auxiliares (`Build-PsExecArguments`, `Invoke-PsExecProcess`, `Format-LogMessage`, `Format-CenteredText` etc.) agora são internas
+- Exit code diferente de 0 é registrado como Info pelo `Invoke-PsExecCommand`; quem chama decide se é falha (3010, exit 2 dos Scripts e a máscara do OffScrub não são)
+- `Write-Log` sem `Start-Log` não lança mais erro: a mensagem vai para o Verbose, e os módulos podem ser usados fora do menu
+- Removidos por falta de uso: `Pause-Toolkit`, `Clear-Toolkit`, `Get-ApplicationRoot`, `Format-Duration` e `Get-SoftwareUninstallCommand` (substituída por `Find-InstalledSoftware`)
 
 ---
 
